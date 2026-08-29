@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  # 1. Full-stack Application Service (React + Express)
+  smartqueue-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: smartqueue-app
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - JWT_SECRET=smartqueue-production-secure-jwt-key-2026
+      - DATABASE_URL=postgresql://smartqueue_user:smartqueue_password@postgres:5432/smartqueue_db
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - smartqueue-network
+
+  # 2. PostgreSQL Relational Database Service
+  postgres:
+    image: postgres:16-alpine
+    container_name: smartqueue-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: smartqueue_user
+      POSTGRES_PASSWORD: smartqueue_password
+      POSTGRES_DB: smartqueue_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smartqueue_user -d smartqueue_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - smartqueue-network
+
+  # 3. Redis Cache & Fast Active Queue State Service
+  redis:
+    image: redis:7-alpine
+    container_name: smartqueue-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - smartqueue-network
+
+networks:
+  smartqueue-network:
+    driver: bridge
+
+volumes:
+  pgdata:
+    driver: local
+  redisdata:
+    driver: local
