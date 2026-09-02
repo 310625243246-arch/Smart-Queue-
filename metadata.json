@@ -1,0 +1,6 @@
+{
+  "name": "SmartQueue",
+  "description": "Smart digital queue management system for hospitals, banks, and service centers with real-time tracking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
