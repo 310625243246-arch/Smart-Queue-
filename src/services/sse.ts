@@ -6,8 +6,13 @@ class SSEClientManager {
   private isConnecting: boolean = false;
 
   public connect(token?: string | null) {
+    if (typeof window === 'undefined' || typeof EventSource === 'undefined') {
+      return;
+    }
+
     if (this.eventSource) {
       this.eventSource.close();
+      this.eventSource = null;
     }
 
     const url = token 
@@ -76,3 +81,23 @@ class SSEClientManager {
 }
 
 export const sseManager = new SSEClientManager();
+
+export const connectSSE = (token?: string | null) => {
+  sseManager.connect(token);
+  return {
+    subscribe: (handler: (event: { type: string; data: any }) => void) => {
+      const unsub1 = sseManager.on('QUEUE_ADVANCED', (data) => handler({ type: 'QUEUE_ADVANCED', data }));
+      const unsub2 = sseManager.on('TOKEN_CALLED', (data) => handler({ type: 'TOKEN_CALLED', data }));
+      const unsub3 = sseManager.on('COUNTERS_UPDATED', (data) => handler({ type: 'COUNTERS_UPDATED', data }));
+      const unsub4 = sseManager.on('SERVICES_UPDATED', (data) => handler({ type: 'SERVICES_UPDATED', data }));
+      return () => {
+        unsub1();
+        unsub2();
+        unsub3();
+        unsub4();
+      };
+    },
+    on: (event: string, handler: EventHandler) => sseManager.on(event, handler),
+    disconnect: () => sseManager.disconnect(),
+  };
+};

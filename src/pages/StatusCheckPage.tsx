@@ -98,8 +98,8 @@ export const StatusCheckPage: React.FC = () => {
 
       {/* Quick sample token buttons */}
       <div className="flex items-center justify-center gap-2 text-xs text-slate-400 mb-8 flex-wrap">
-        <span>Try demo tokens:</span>
-        {['A102', 'A103', 'A105', 'B101'].map((sample) => (
+        <span>Sample active tokens:</span>
+        {['Q02', 'Q03', 'P02', 'P03', 'L02', 'B02'].map((sample) => (
           <button
             key={sample}
             type="button"
@@ -107,7 +107,7 @@ export const StatusCheckPage: React.FC = () => {
               setSearchQuery(sample);
               handleLookup(sample);
             }}
-            className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg transition-colors"
+            className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-lg transition-colors cursor-pointer"
           >
             {sample}
           </button>

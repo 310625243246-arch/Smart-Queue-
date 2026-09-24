@@ -18,11 +18,14 @@ import {
   PhoneCall,
   UserCheck
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { request } from '../services/api';
 import { Counter, Service, QueueToken } from '../types';
 
 export const StaffPage: React.FC = () => {
-  const { user } = useAuth();
+  const { user, loading: authLoading, switchRole } = useAuth();
+  const navigate = useNavigate();
+  const [roleSwitching, setRoleSwitching] = useState(false);
 
   // State
   const [counters, setCounters] = useState<Counter[]>([]);
@@ -72,8 +75,11 @@ export const StaffPage: React.FC = () => {
   };
 
   useEffect(() => {
+    if (authLoading || (user?.role !== 'STAFF' && user?.role !== 'ADMIN')) {
+      return;
+    }
     fetchInitialData();
-  }, [user]);
+  }, [authLoading, user?.role, user?.id]);
 
   // Fetch live queue status for selected service
   const refreshQueueStatus = async () => {
@@ -107,10 +113,13 @@ export const StaffPage: React.FC = () => {
   };
 
   useEffect(() => {
+    if (authLoading || (user?.role !== 'STAFF' && user?.role !== 'ADMIN') || !selectedServiceId) {
+      return;
+    }
     refreshQueueStatus();
     const interval = setInterval(refreshQueueStatus, 4000);
     return () => clearInterval(interval);
-  }, [selectedServiceId, selectedCounterId, counters]);
+  }, [authLoading, user?.role, selectedServiceId, selectedCounterId, counters]);
 
   // Service stopwatch timer
   useEffect(() => {
@@ -243,6 +252,17 @@ export const StaffPage: React.FC = () => {
     }
   };
 
+  const handleRoleSwitch = async (role: 'STAFF') => {
+    setRoleSwitching(true);
+    try {
+      await switchRole(role);
+    } catch (err: any) {
+      setAlertMessage({ type: 'error', text: err.message || 'Unable to switch to staff account.' });
+    } finally {
+      setRoleSwitching(false);
+    }
+  };
+
   const selectedCounter = counters.find((c) => c.id === selectedCounterId);
   const selectedService = services.find((s) => s.id === selectedServiceId);
 
@@ -251,6 +271,50 @@ export const StaffPage: React.FC = () => {
     const secs = totalSeconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
+
+  // If session initialization is still loading, show clean loading message
+  if (authLoading) {
+    return (
+      <div className="min-h-[70vh] flex flex-col items-center justify-center">
+        <div className="w-10 h-10 border-4 border-emerald-600 border-t-transparent rounded-full animate-spin mb-4" />
+        <p className="text-sm font-semibold text-slate-700">Loading staff session...</p>
+      </div>
+    );
+  }
+
+  // Role separation guard: Customer accounts are blocked from accessing staff controls
+  if (user?.role !== 'STAFF' && user?.role !== 'ADMIN') {
+    return (
+      <div className="max-w-md mx-auto px-4 py-16 text-center">
+        <div className="w-14 h-14 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto mb-4 shadow-sm">
+          <Activity className="w-7 h-7" />
+        </div>
+        <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400">
+          Role-Protected Area
+        </span>
+        <h2 className="text-xl font-bold text-slate-900 mt-1">Staff Counter Console</h2>
+        <p className="text-xs sm:text-sm text-slate-500 mt-2 mb-6">
+          This portal is reserved for service counter operators to call tokens, record service times, and manage active desks.
+        </p>
+
+        <div className="space-y-3">
+          <button
+            onClick={() => handleRoleSwitch('STAFF')}
+            disabled={roleSwitching}
+            className="w-full py-3 px-4 bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer"
+          >
+            {roleSwitching ? 'Switching Profile...' : 'Enter with Staff Profile'}
+          </button>
+          <button
+            onClick={() => navigate('/customer')}
+            className="w-full py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all cursor-pointer"
+          >
+            Return to Customer Portal
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">

@@ -1,651 +1,864 @@
-import React, { useState, useEffect } from 'react';
-import { useAuth } from '../context/AuthContext';
-import { useQueue } from '../context/QueueContext';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
-  Building2, 
-  HeartPulse, 
-  Landmark, 
+  Users, 
   Clock, 
-  AlertCircle, 
   CheckCircle2, 
-  Plus, 
-  Trash2, 
+  AlertCircle, 
+  BellRing, 
   ArrowRight, 
-  Layers, 
+  Volume2, 
+  VolumeX, 
   RefreshCw, 
-  Search,
-  BellRing,
-  Check,
-  User,
-  History,
-  Timer
+  Check, 
+  ChevronRight, 
+  Building2, 
+  Sparkles, 
+  X, 
+  Ticket, 
+  ExternalLink,
+  ChevronDown,
+  MapPin
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import { request } from '../services/api';
-import { Organization, Service, QueueToken } from '../types';
+import { connectSSE } from '../services/sse';
+import { QueueToken, Service, Organization } from '../types';
+
+const STANDARD_SERVICES = [
+  { id: 'srv-gen-enquiry', name: 'General Enquiry', description: 'Quick inquiries, receptionist assistance, desk routing', avgTime: 8 },
+  { id: 'srv-cust-support', name: 'Customer Support', description: 'Assistance with inquiries, complaints, and technical support', avgTime: 8 },
+  { id: 'srv-acc-service', name: 'Account Service', description: 'Account registration, profile updates, and statements', avgTime: 8 },
+  { id: 'srv-consultation', name: 'Consultation', description: 'Specialist case assessment and one-on-one review', avgTime: 8 },
+  { id: 'srv-other', name: 'Other', description: 'Special requests, notary, and general counter services', avgTime: 8 },
+];
 
 export const CustomerPage: React.FC = () => {
   const { user } = useAuth();
-  const { refreshTokens } = useQueue();
 
-  // Data states
+  // Form State
+  const [customerName, setCustomerName] = useState(user?.name || '');
+  const [selectedService, setSelectedService] = useState('General Enquiry');
+  const [customerEmail, setCustomerEmail] = useState(user?.email || '');
+
+  // Active Token & Queue State
+  const [activeToken, setActiveToken] = useState<QueueToken | null>(null);
+  const [allTokens, setAllTokens] = useState<QueueToken[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [viewMode, setViewMode] = useState<'SIMPLE' | 'EXPLORE_ALL'>('SIMPLE');
+
+  // Multi-venue queues state (preserves existing feature)
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [services, setServices] = useState<Service[]>([]);
-  const [activeTokens, setActiveTokens] = useState<QueueToken[]>([]);
-  const [pastTokens, setPastTokens] = useState<QueueToken[]>([]);
-  const [historyRecords, setHistoryRecords] = useState<any[]>([]);
-
-  // Selection states
   const [selectedOrgId, setSelectedOrgId] = useState<string>('');
-  const [selectedServiceId, setSelectedServiceId] = useState<string>('');
-  const [guestName, setGuestName] = useState<string>(user?.name || '');
-  const [guestEmail, setGuestEmail] = useState<string>(user?.email || '');
 
-  // UI States
-  const [activeTab, setActiveTab] = useState<'JOIN' | 'MY_TOKENS' | 'HISTORY'>('JOIN');
-  const [categoryFilter, setCategoryFilter] = useState<'ALL' | 'HOSPITAL' | 'BANK' | 'SERVICE_CENTER'>('ALL');
-  const [orgSearch, setOrgSearch] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [actionLoading, setActionLoading] = useState(false);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [tokenToCancel, setTokenToCancel] = useState<QueueToken | null>(null);
+  const previousStatusRef = useRef<string | null>(null);
 
-  // Fetch all initial customer data
-  const fetchData = async () => {
+  // Play audio alert chime
+  const playAlertChime = () => {
+    if (!soundEnabled) return;
     try {
-      setLoading(true);
-      const [orgsRes, srvRes] = await Promise.all([
-        request<{ organizations: Organization[] }>('/organizations'),
-        request<{ services: Service[] }>('/services'),
-      ]);
-      setOrganizations(orgsRes.organizations || []);
-      setServices(srvRes.services || []);
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(523.25, ctx.currentTime); // C5
+      osc.frequency.exponentialRampToValueAtTime(783.99, ctx.currentTime + 0.18); // G5
+      gain.gain.setValueAtTime(0.3, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.5);
+    } catch {
+      // Audio context may be restricted by autoplay policy
+    }
+  };
 
-      if (user) {
-        const tokenData = await request<{ activeTokens: QueueToken[]; pastTokens: QueueToken[] }>('/customer/tokens');
-        setActiveTokens(tokenData.activeTokens || []);
-        setPastTokens(tokenData.pastTokens || []);
+  // Sync user prop
+  useEffect(() => {
+    if (user?.name && !customerName) setCustomerName(user.name);
+    if (user?.email && !customerEmail) setCustomerEmail(user.email);
+  }, [user]);
 
-        const histData = await request<{ history: any[] }>('/customer/history');
-        setHistoryRecords(histData.history || []);
+  // Fetch active token and venues
+  const refreshTokens = async () => {
+    try {
+      setErrorMessage(null);
+      // 1. Fetch user/guest tokens
+      const localTokenId = localStorage.getItem('smartqueue_active_token_id');
+      const token = localStorage.getItem('smartqueue_token');
+
+      let list: QueueToken[] = [];
+      if (token) {
+        try {
+          const tokenRes = await request<{ activeTokens: QueueToken[]; historyTokens: QueueToken[] }>('/customer/tokens');
+          list = tokenRes.activeTokens || [];
+          setAllTokens(list);
+        } catch {
+          // guest or session unauthenticated
+        }
       }
+
+      // Find best active token
+      let current: QueueToken | null = null;
+      if (localTokenId) {
+        current = list.find((t) => t.id === localTokenId) || null;
+        if (!current) {
+          // Try fetching by ID directly
+          try {
+            const single = await request<{ token: QueueToken }>(`/tokens/${localTokenId}`);
+            if (single.token && !['COMPLETED', 'CANCELLED', 'SKIPPED'].includes(single.token.status)) {
+              current = single.token;
+            } else {
+              localStorage.removeItem('smartqueue_active_token_id');
+            }
+          } catch {
+            localStorage.removeItem('smartqueue_active_token_id');
+          }
+        }
+      }
+
+      if (!current && list.length > 0) {
+        current = list[0];
+        localStorage.setItem('smartqueue_active_token_id', current.id);
+      }
+
+      // Check if status changed to CALLED
+      if (current) {
+        if (current.status === 'CALLED' && previousStatusRef.current !== 'CALLED') {
+          playAlertChime();
+        }
+        previousStatusRef.current = current.status;
+      }
+
+      setActiveToken(current);
     } catch (err: any) {
-      console.warn('Error fetching customer portal data:', err);
+      console.warn('Queue refresh error:', err);
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    fetchData();
-  }, [user]);
+  // Fetch venue data for explore mode & hospital selection
+  const fetchVenueData = async () => {
+    try {
+      const [orgRes, srvRes] = await Promise.all([
+        request<{ organizations: Organization[] }>('/organizations'),
+        request<{ services: Service[] }>('/services'),
+      ]);
+      const orgs = orgRes.organizations || [];
+      const srvs = srvRes.services || [];
+      setOrganizations(orgs);
+      setServices(srvs);
 
-  // Handle Token Generation (Join Queue)
+      if (orgs.length > 0) {
+        // Prioritize hospital organization by default
+        const hospital = orgs.find((o) => o.type === 'HOSPITAL') || orgs[0];
+        setSelectedOrgId(hospital.id);
+        const matched = srvs.filter((s) => s.organizationId === hospital.id);
+        if (matched.length > 0) {
+          setSelectedService(matched[0].id);
+        }
+      }
+    } catch {
+      // optional
+    }
+  };
+
+  const handleOrgChange = (newOrgId: string) => {
+    setSelectedOrgId(newOrgId);
+    const orgServices = services.filter((s) => s.organizationId === newOrgId);
+    if (orgServices.length > 0) {
+      setSelectedService(orgServices[0].id);
+    }
+  };
+
+  // Initial load + Real-time SSE + polling fallback
+  useEffect(() => {
+    refreshTokens();
+    fetchVenueData();
+
+    const interval = setInterval(() => {
+      const hasToken = localStorage.getItem('smartqueue_token');
+      const hasLocalTokenId = localStorage.getItem('smartqueue_active_token_id');
+      if (hasToken || hasLocalTokenId) {
+        refreshTokens();
+      }
+    }, 4000);
+
+    const sse = connectSSE();
+    const unsub = sse.subscribe((event) => {
+      if (event.type === 'QUEUE_ADVANCED' || event.type === 'TOKEN_UPDATED') {
+        refreshTokens();
+      }
+    });
+
+    return () => {
+      clearInterval(interval);
+      unsub();
+    };
+  }, []);
+
+  // Form Submit: JOIN QUEUE
   const handleJoinQueue = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedServiceId) {
-      setErrorMessage('Please choose a service to take a token.');
+    if (!customerName.trim()) {
+      setErrorMessage('Please enter your full name to generate a token.');
       return;
     }
 
+    setSubmitting(true);
     setErrorMessage(null);
-    setSuccessMessage(null);
-    setActionLoading(true);
 
     try {
-      const data = await request<{ token: QueueToken; message: string }>('/queues/join', {
+      const payload = {
+        customerName: customerName.trim(),
+        customerEmail: customerEmail.trim() || `${customerName.trim().toLowerCase().replace(/\s+/g, '')}@smartqueue.com`,
+        facilityId: selectedOrgId,
+        organizationId: selectedOrgId,
+        serviceId: selectedService,
+      };
+
+      const res = await request<{ message: string; token: QueueToken }>('/queues/join', {
         method: 'POST',
-        body: JSON.stringify({
-          serviceId: selectedServiceId,
-          customerName: user ? user.name : (guestName || 'Guest Customer'),
-          customerEmail: user ? user.email : (guestEmail || 'guest@smartqueue.com'),
-        }),
+        body: JSON.stringify(payload),
       });
 
-      setSuccessMessage(`Success! Your Digital Token is ${data.token.tokenNumber}`);
-      setActiveTokens((prev) => [data.token, ...prev]);
-      refreshTokens();
-      setActiveTab('MY_TOKENS');
-      // Reset service selection
-      setSelectedServiceId('');
+      if (res.token) {
+        setActiveToken(res.token);
+        localStorage.setItem('smartqueue_active_token_id', res.token.id);
+        refreshTokens();
+      }
     } catch (err: any) {
-      setErrorMessage(err.message || 'Failed to join queue. Please try again.');
+      setErrorMessage(err.message || 'Unable to join queue right now. Please check your connection.');
     } finally {
-      setActionLoading(false);
+      setSubmitting(false);
     }
   };
 
-  // Handle Cancel Token
-  const handleConfirmCancel = async () => {
-    if (!tokenToCancel) return;
-    setActionLoading(true);
+  // Action: LEAVE QUEUE (Cancel Token)
+  const handleLeaveQueue = async () => {
+    if (!activeToken) return;
+    if (!confirm('Are you sure you want to cancel your queue token? You will lose your position.')) return;
+
     try {
-      await request(`/tokens/${tokenToCancel.id}/cancel`, { method: 'POST' });
-      setActiveTokens((prev) => prev.filter((t) => t.id !== tokenToCancel.id));
-      setTokenToCancel(null);
-      setSuccessMessage(`Token ${tokenToCancel.tokenNumber} was cancelled.`);
-      fetchData();
+      await request(`/tokens/${activeToken.id}/cancel`, { method: 'POST' });
+      localStorage.removeItem('smartqueue_active_token_id');
+      setActiveToken(null);
+      refreshTokens();
     } catch (err: any) {
-      setErrorMessage(err.message || 'Failed to cancel token.');
-    } finally {
-      setActionLoading(false);
+      setErrorMessage(err.message || 'Failed to cancel token');
     }
   };
 
-  const filteredOrgs = organizations.filter((org) => {
-    const matchesCategory = categoryFilter === 'ALL' || org.type === categoryFilter;
-    const matchesSearch = org.name.toLowerCase().includes(orgSearch.toLowerCase()) ||
-      org.address.toLowerCase().includes(orgSearch.toLowerCase());
-    return matchesCategory && matchesSearch;
-  });
+  // Derive dynamic waiting time
+  const peopleAhead = activeToken ? (activeToken.status === 'WAITING' ? activeToken.peopleAhead : 0) : 0;
+  const estimatedWait = activeToken 
+    ? (activeToken.status === 'WAITING' ? activeToken.estimatedWaitMinutes || peopleAhead * 8 : 0) 
+    : 0;
 
-  const availableServices = selectedOrgId
-    ? services.filter((s) => s.organizationId === selectedOrgId && s.isActive)
-    : [];
+  // Derive visual sequence path strictly for this service
+  const nowServingToken = activeToken?.nowServing && activeToken.nowServing !== 'None' 
+    ? activeToken.nowServing 
+    : 'None';
 
-  const selectedOrg = organizations.find((o) => o.id === selectedOrgId);
-  const selectedService = services.find((s) => s.id === selectedServiceId);
+  const sequencePath = activeToken?.sequencePath && activeToken.sequencePath.length > 0
+    ? activeToken.sequencePath
+    : (activeToken ? [activeToken.tokenNumber] : []);
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      {/* Header & Tabs */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-6 mb-8">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="px-2.5 py-0.5 text-[11px] font-bold rounded-full bg-blue-100 text-blue-800 uppercase">
-              Customer Portal
-            </span>
-            <span className="text-xs text-slate-400">&bull;</span>
-            <span className="text-xs text-emerald-600 font-semibold flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              Live Queue Synced
-            </span>
-          </div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900">
-            Digital Queue & Token Tracker
-          </h1>
-          <p className="text-sm text-slate-500 mt-1">
-            {user ? `Logged in as ${user.name} (${user.email})` : 'Join any service queue and track your position in real time.'}
-          </p>
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+      {/* Top Brand Header */}
+      <div className="text-center mb-10">
+        <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-blue-50 border border-blue-200 text-blue-700 text-xs font-bold uppercase tracking-wider mb-3">
+          <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+          SmartQueue
         </div>
+        <h1 className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
+          Digital Queue Management System
+        </h1>
+        <p className="text-base text-slate-500 mt-2 font-medium">
+          Skip the line. Track your turn in real time.
+        </p>
 
-        <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 self-start md:self-auto">
+        {/* View Switcher: Simplified Standard Form vs Advanced Venue Browser */}
+        <div className="flex items-center justify-center gap-2 mt-5">
           <button
-            onClick={() => setActiveTab('JOIN')}
-            className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
-              activeTab === 'JOIN' ? 'bg-white text-blue-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            onClick={() => setViewMode('SIMPLE')}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              viewMode === 'SIMPLE'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
             }`}
           >
-            <Plus className="w-3.5 h-3.5" />
-            Take Token
+            Digital Token Portal
           </button>
-
           <button
-            onClick={() => setActiveTab('MY_TOKENS')}
-            className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
-              activeTab === 'MY_TOKENS' ? 'bg-white text-blue-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
+            onClick={() => setViewMode('EXPLORE_ALL')}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              viewMode === 'EXPLORE_ALL'
+                ? 'bg-blue-600 text-white shadow-xs'
+                : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
             }`}
           >
-            <Clock className="w-3.5 h-3.5" />
-            Active Tokens
-            {activeTokens.length > 0 && (
-              <span className="ml-1 px-1.5 py-0.2 rounded-full bg-blue-600 text-white text-[10px] font-black">
-                {activeTokens.length}
-              </span>
-            )}
-          </button>
-
-          <button
-            onClick={() => setActiveTab('HISTORY')}
-            className={`px-4 py-2 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
-              activeTab === 'HISTORY' ? 'bg-white text-blue-600 shadow-xs' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <History className="w-3.5 h-3.5" />
-            Visit History
+            Explore Hospital & Bank Venues
           </button>
         </div>
       </div>
 
-      {/* Messages */}
-      {successMessage && (
-        <div className="mb-6 p-4 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-between text-emerald-800 text-sm">
-          <div className="flex items-center gap-3">
-            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-            <div>{successMessage}</div>
-          </div>
-          <button onClick={() => setSuccessMessage(null)} className="text-xs font-bold hover:underline">
-            Dismiss
-          </button>
-        </div>
-      )}
-
+      {/* Error Alert Banner */}
       {errorMessage && (
-        <div className="mb-6 p-4 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-between text-rose-800 text-sm">
-          <div className="flex items-center gap-3">
-            <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
-            <div>{errorMessage}</div>
+        <div className="mb-6 p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-center justify-between gap-3 shadow-xs animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+            <span>{errorMessage}</span>
           </div>
-          <button onClick={() => setErrorMessage(null)} className="text-xs font-bold hover:underline">
-            Dismiss
+          <button
+            onClick={refreshTokens}
+            className="px-3 py-1 bg-white hover:bg-rose-100 text-rose-700 font-bold rounded-lg border border-rose-200 flex items-center gap-1 shrink-0"
+          >
+            <RefreshCw className="w-3 h-3" />
+            Retry
           </button>
         </div>
       )}
 
-      {/* TAB 1: JOIN QUEUE WIZARD */}
-      {activeTab === 'JOIN' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Step 1: Select Organization */}
-          <div className="lg:col-span-2 space-y-6">
-            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-                <div>
-                  <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                    <span className="w-6 h-6 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">1</span>
-                    Choose Organization
-                  </h2>
-                  <p className="text-xs text-slate-500 mt-0.5">Select a hospital, bank branch, or citizen service center</p>
-                </div>
-
-                {/* Filter chips */}
-                <div className="flex flex-wrap gap-1.5">
-                  {(['ALL', 'HOSPITAL', 'BANK', 'SERVICE_CENTER'] as const).map((cat) => (
-                    <button
-                      key={cat}
-                      onClick={() => setCategoryFilter(cat)}
-                      className={`px-2.5 py-1 text-xs font-semibold rounded-lg transition-colors ${
-                        categoryFilter === cat
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      {cat === 'ALL' ? 'All Venues' : cat === 'HOSPITAL' ? 'Hospitals' : cat === 'BANK' ? 'Banks' : 'Govt Hubs'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Search Bar */}
-              <div className="relative mb-4">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
-                <input
-                  type="text"
-                  placeholder="Search organization by name or location..."
-                  value={orgSearch}
-                  onChange={(e) => setOrgSearch(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-hidden focus:ring-2 focus:ring-blue-500 focus:bg-white"
-                />
-              </div>
-
-              {/* Org List */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-72 overflow-y-auto pr-1">
-                {filteredOrgs.map((org) => {
-                  const isSelected = selectedOrgId === org.id;
-                  return (
-                    <div
-                      key={org.id}
-                      onClick={() => {
-                        setSelectedOrgId(org.id);
-                        setSelectedServiceId('');
-                      }}
-                      className={`p-4 rounded-xl border transition-all cursor-pointer text-left flex flex-col justify-between ${
-                        isSelected
-                          ? 'border-blue-600 bg-blue-50/50 shadow-xs ring-1 ring-blue-600'
-                          : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/50'
-                      }`}
-                    >
-                      <div>
-                        <div className="flex items-center justify-between gap-2 mb-2">
-                          <span className={`p-1.5 rounded-lg ${
-                            org.type === 'HOSPITAL' ? 'bg-rose-100 text-rose-700' :
-                            org.type === 'BANK' ? 'bg-blue-100 text-blue-700' :
-                            'bg-emerald-100 text-emerald-700'
-                          }`}>
-                            {org.type === 'HOSPITAL' ? <HeartPulse className="w-4 h-4" /> :
-                             org.type === 'BANK' ? <Landmark className="w-4 h-4" /> :
-                             <Building2 className="w-4 h-4" />}
-                          </span>
-                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-600 uppercase">
-                            {org.type.replace('_', ' ')}
-                          </span>
-                        </div>
-                        <h3 className="font-bold text-sm text-slate-900 leading-tight">{org.name}</h3>
-                        <p className="text-xs text-slate-500 mt-1 line-clamp-1">{org.address}</p>
-                      </div>
-
-                      <div className="mt-3 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
-                        <span>{org.contactPhone || 'Available'}</span>
-                        {isSelected && <span className="font-bold text-blue-600 flex items-center gap-1"><Check className="w-3 h-3" /> Selected</span>}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+      {/* VIEW MODE 1: STANDARD SMARTQUEUE FORM & ACTIVE TICKET */}
+      {viewMode === 'SIMPLE' && (
+        <>
+          {loading ? (
+            <div className="bg-white p-12 rounded-3xl border border-slate-200 text-center shadow-xs">
+              <Clock className="w-8 h-8 animate-spin text-blue-600 mx-auto mb-3" />
+              <p className="text-sm font-semibold text-slate-700">Connecting to queue server...</p>
             </div>
+          ) : activeToken ? (
+            /* ========================================================
+               FEATURE 2 & 4: DIGITAL QUEUE TICKET (Active Token)
+               ======================================================== */
+            <div className="space-y-6">
+              <div
+                className={`bg-white rounded-3xl border shadow-xl p-8 sm:p-10 relative overflow-hidden transition-all duration-300 ${
+                  activeToken.status === 'CALLED'
+                    ? 'border-blue-500 ring-4 ring-blue-500/20 bg-gradient-to-b from-blue-50/50 to-white'
+                    : activeToken.status === 'SERVING'
+                    ? 'border-emerald-500 ring-4 ring-emerald-500/20 bg-gradient-to-b from-emerald-50/40 to-white'
+                    : 'border-slate-200'
+                }`}
+              >
+                {/* Status Bar */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-slate-100 mb-6">
+                  <div>
+                    <span className="text-[11px] font-extrabold uppercase tracking-wider text-blue-600 flex items-center gap-1.5">
+                      <Building2 className="w-3.5 h-3.5" />
+                      {activeToken.organizationName || 'Metropolitan Central Hospital'}
+                    </span>
+                    <h2 className="text-xl font-black text-slate-900 mt-0.5">
+                      {activeToken.serviceName || selectedService}
+                    </h2>
+                    <p className="text-xs text-slate-500 flex flex-wrap items-center gap-2 mt-1">
+                      <span>Customer: <strong className="text-slate-700">{activeToken.customerName}</strong></span>
+                      <span>&bull;</span>
+                      <span className="flex items-center gap-1 text-slate-500">
+                        <MapPin className="w-3 h-3 text-slate-400" />
+                        {organizations.find((o) => o.id === activeToken.organizationId)?.address || 'Main Campus Facility'}
+                      </span>
+                    </p>
+                  </div>
 
-            {/* Step 2: Select Service */}
-            {selectedOrgId && (
-              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs animate-in fade-in">
-                <h2 className="text-base font-bold text-slate-900 flex items-center gap-2 mb-1">
-                  <span className="w-6 h-6 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">2</span>
-                  Select Service at {selectedOrg?.name}
-                </h2>
-                <p className="text-xs text-slate-500 mb-4">Choose the specific service queue you want to join</p>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => setSoundEnabled(!soundEnabled)}
+                      className="p-2 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-50 transition-colors"
+                      title={soundEnabled ? 'Mute chimes' : 'Enable audio chime'}
+                    >
+                      {soundEnabled ? <Volume2 className="w-4 h-4 text-blue-600" /> : <VolumeX className="w-4 h-4" />}
+                    </button>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {availableServices.length === 0 ? (
-                    <div className="col-span-2 text-center p-6 text-slate-400 text-xs bg-slate-50 rounded-xl">
-                      No active services configured for this venue.
+                    {/* STATUS BADGE */}
+                    <div
+                      className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-extrabold tracking-wide uppercase ${
+                        activeToken.status === 'WAITING'
+                          ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                          : activeToken.status === 'CALLED'
+                          ? 'bg-blue-600 text-white animate-pulse shadow-md shadow-blue-500/30'
+                          : activeToken.status === 'SERVING'
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-slate-100 text-slate-700'
+                      }`}
+                    >
+                      <span className="w-2 h-2 rounded-full bg-current" />
+                      {activeToken.status}
                     </div>
-                  ) : (
-                    availableServices.map((srv) => {
-                      const isSelected = selectedServiceId === srv.id;
-                      return (
-                        <div
-                          key={srv.id}
-                          onClick={() => setSelectedServiceId(srv.id)}
-                          className={`p-4 rounded-xl border transition-all cursor-pointer ${
-                            isSelected
-                              ? 'border-blue-600 bg-blue-50/50 shadow-xs ring-1 ring-blue-600'
-                              : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/50'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="px-2 py-0.5 rounded text-xs font-black bg-blue-600 text-white">
-                              Code {srv.codePrefix}
-                            </span>
-                            <span className="text-xs font-semibold text-slate-500 flex items-center gap-1">
-                              <Timer className="w-3 h-3 text-slate-400" />
-                              ~{srv.averageServiceTime}m avg
-                            </span>
-                          </div>
-                          <h4 className="font-bold text-sm text-slate-900">{srv.name}</h4>
-                          <p className="text-xs text-slate-500 mt-1 line-clamp-2">{srv.description}</p>
-                        </div>
-                      );
-                    })
+                  </div>
+                </div>
+
+                {/* CALL ALERT BANNER */}
+                {activeToken.status === 'CALLED' && (
+                  <div className="mb-6 p-4 rounded-2xl bg-blue-600 text-white text-center font-bold text-sm flex items-center justify-center gap-2 animate-bounce shadow-lg shadow-blue-600/30">
+                    <BellRing className="w-5 h-5" />
+                    YOUR TURN! PLEASE PROCEED TO {activeToken.counterNumber ? activeToken.counterNumber.toUpperCase() : 'COUNTER 1'}
+                  </div>
+                )}
+
+                {/* TICKET CENTER: YOU ARE IN QUEUE + TOKEN NUMBER */}
+                <div className="text-center py-4">
+                  <span className="text-xs font-bold uppercase tracking-widest text-slate-400">
+                    YOU ARE IN QUEUE
+                  </span>
+                  <div className="text-7xl sm:text-8xl font-black text-slate-900 tracking-tight font-mono my-2 text-blue-600">
+                    {activeToken.tokenNumber}
+                  </div>
+                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    Queue Token
+                  </span>
+                </div>
+
+                {/* 4 CORE METRICS: POSITION, PEOPLE AHEAD, ESTIMATED WAIT, NOW SERVING */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 my-8">
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 text-center">
+                    <div className="text-xs text-slate-500 font-semibold mb-1">Queue Position</div>
+                    <div className="text-2xl sm:text-3xl font-black text-slate-900">
+                      {activeToken.status === 'SERVING'
+                        ? '#1'
+                        : activeToken.status === 'CALLED'
+                        ? '#1'
+                        : `#${activeToken.positionInQueue || peopleAhead + 1}`}
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-1">Your line position</div>
+                  </div>
+
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 text-center">
+                    <div className="text-xs text-slate-500 font-semibold mb-1">People Ahead</div>
+                    <div className="text-2xl sm:text-3xl font-black text-slate-900">
+                      {activeToken.status === 'SERVING' ? '0 (Serving)' : activeToken.status === 'CALLED' ? '0 (Called)' : `${peopleAhead} in line`}
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-1">Waiting before you</div>
+                  </div>
+
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 text-center">
+                    <div className="text-xs text-slate-500 font-semibold mb-1">Estimated Wait</div>
+                    <div className="text-2xl sm:text-3xl font-black text-blue-600">
+                      {activeToken.status === 'SERVING'
+                        ? 'In Progress'
+                        : activeToken.status === 'CALLED'
+                        ? 'Immediate'
+                        : estimatedWait > 0
+                        ? `${estimatedWait} min`
+                        : '< 1 min'}
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-1">
+                      {peopleAhead > 0 ? `${peopleAhead} × 8 min avg` : 'Turn approaching'}
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 text-center">
+                    <div className="text-xs text-slate-500 font-semibold mb-1">Now Serving</div>
+                    <div className="text-2xl sm:text-3xl font-black text-slate-900 font-mono">
+                      {nowServingToken}
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-1">
+                      {activeToken.counterNumber || 'Counter 1'}
+                    </div>
+                  </div>
+                </div>
+
+                {/* FEATURE 4: PROFESSIONAL STATUS MESSAGE BOX */}
+                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 text-center text-xs font-medium text-slate-600 mb-8">
+                  {activeToken.status === 'WAITING' && (
+                    <span className="flex items-center justify-center gap-1.5">
+                      <Clock className="w-4 h-4 text-amber-500" />
+                      You are in the queue. <strong>{peopleAhead} {peopleAhead === 1 ? 'person is' : 'people are'} ahead of you</strong>.
+                    </span>
+                  )}
+                  {activeToken.status === 'CALLED' && (
+                    <span className="flex items-center justify-center gap-1.5 text-blue-700 font-bold">
+                      <BellRing className="w-4 h-4 text-blue-600" />
+                      Your turn! Please proceed to {activeToken.counterNumber || 'Counter 1'}.
+                    </span>
+                  )}
+                  {activeToken.status === 'SERVING' && (
+                    <span className="flex items-center justify-center gap-1.5 text-emerald-700 font-bold">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      You are currently being served at {activeToken.counterNumber || 'Counter 1'}.
+                    </span>
+                  )}
+                  {activeToken.status === 'COMPLETED' && (
+                    <span className="flex items-center justify-center gap-1.5 text-slate-700">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      Thank you for using SmartQueue. Your service is complete.
+                    </span>
+                  )}
+                  {activeToken.status === 'SKIPPED' && (
+                    <span className="flex items-center justify-center gap-1.5 text-rose-700 font-bold">
+                      <AlertCircle className="w-4 h-4 text-rose-600" />
+                      Your token was skipped. Please contact the service counter.
+                    </span>
                   )}
                 </div>
-              </div>
-            )}
-          </div>
 
-          {/* Step 3: Summary & Generate Token Card */}
-          <div className="lg:col-span-1">
-            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-md sticky top-24">
-              <h3 className="text-base font-bold text-slate-900 mb-4 flex items-center gap-2">
-                <span className="w-6 h-6 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold">3</span>
-                Token Confirmation
-              </h3>
-
-              {!user && (
-                <div className="space-y-3 mb-4 pb-4 border-b border-slate-100">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">Your Full Name</label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. Alex Johnson"
-                      value={guestName}
-                      onChange={(e) => setGuestName(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs"
-                    />
+                {/* PROGRESS INDICATOR */}
+                <div className="mb-8">
+                  <div className="flex items-center justify-between text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">
+                    <span>Progress Indicator</span>
+                    <span>Real-time queue chain</span>
                   </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-700 mb-1">Email (for alerts)</label>
-                    <input
-                      type="email"
-                      required
-                      placeholder="customer@example.com"
-                      value={guestEmail}
-                      onChange={(e) => setGuestEmail(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs"
-                    />
+
+                  <div className="p-4 rounded-2xl bg-slate-900 text-white flex flex-wrap items-center justify-between gap-2 overflow-x-auto">
+                    {sequencePath.map((item, idx) => {
+                      const isNow = idx === 0;
+                      const isYou = item === activeToken.tokenNumber;
+
+                      return (
+                        <React.Fragment key={item}>
+                          <div className="flex flex-col items-center">
+                            <span
+                              className={`px-3 py-1.5 rounded-xl font-mono text-xs font-black ${
+                                isYou
+                                  ? 'bg-blue-600 text-white ring-2 ring-blue-400'
+                                  : isNow
+                                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                                  : 'bg-slate-800 text-slate-300'
+                              }`}
+                            >
+                              {item}
+                            </span>
+                            <span className="text-[10px] font-bold text-slate-400 mt-1 uppercase">
+                              {isNow ? 'NOW' : isYou ? 'YOU' : `#${idx + 1}`}
+                            </span>
+                          </div>
+                          {idx < sequencePath.length - 1 && (
+                            <ArrowRight className="w-3.5 h-3.5 text-slate-600 shrink-0" />
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
                   </div>
                 </div>
-              )}
 
-              <div className="space-y-3 bg-slate-50 p-4 rounded-xl text-xs mb-6">
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Selected Venue:</span>
-                  <span className="font-bold text-slate-900 text-right">{selectedOrg ? selectedOrg.name : 'None selected'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Selected Service:</span>
-                  <span className="font-bold text-blue-600 text-right">{selectedService ? selectedService.name : 'None selected'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Token Format:</span>
-                  <span className="font-bold text-slate-900">{selectedService ? `${selectedService.codePrefix}100+` : '--'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Est. Service Duration:</span>
-                  <span className="font-bold text-slate-900">{selectedService ? `~${selectedService.averageServiceTime} min` : '--'}</span>
+                {/* ACTIONS */}
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-6 border-t border-slate-100">
+                  <div className="text-xs text-slate-400 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                    Auto-updating live queue via SSE &amp; Cloud Polling
+                  </div>
+
+                  <div className="flex items-center gap-3 w-full sm:w-auto">
+                    <button
+                      onClick={refreshTokens}
+                      className="px-4 py-2.5 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors flex items-center justify-center gap-1.5 flex-1 sm:flex-none"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      Refresh
+                    </button>
+
+                    <button
+                      onClick={handleLeaveQueue}
+                      className="px-5 py-2.5 rounded-xl text-xs font-bold bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 transition-colors flex items-center justify-center gap-1.5 flex-1 sm:flex-none"
+                    >
+                      Leave Queue
+                    </button>
+                  </div>
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={handleJoinQueue}
-                disabled={!selectedOrgId || !selectedServiceId || actionLoading}
-                className="w-full py-3.5 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-bold rounded-xl text-sm shadow-md shadow-blue-600/20 transition-all flex items-center justify-center gap-2"
-              >
-                <CheckCircle2 className="w-4 h-4" />
-                {actionLoading ? 'Generating Token...' : 'Generate Digital Token'}
-              </button>
-
-              <p className="text-[11px] text-slate-400 text-center mt-3">
-                Live queue position and SMS/In-app alerts will be attached to this token.
-              </p>
+              {/* Take Another Token Option */}
+              <div className="text-center">
+                <button
+                  onClick={() => {
+                    localStorage.removeItem('smartqueue_active_token_id');
+                    setActiveToken(null);
+                  }}
+                  className="text-xs text-blue-600 hover:text-blue-800 font-semibold underline"
+                >
+                  Need another token or service? Click here to fill the form again
+                </button>
+              </div>
             </div>
-          </div>
-        </div>
+          ) : (
+            /* ========================================================
+               FEATURE 1: CUSTOMER LANDING FORM (Join Queue)
+               ======================================================== */
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-xl p-8 sm:p-10">
+              <form onSubmit={handleJoinQueue} className="space-y-5">
+                {/* 1. SELECT HOSPITAL / ORGANIZATION */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <Building2 className="w-3.5 h-3.5 text-blue-600" />
+                      Hospital / Facility
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-normal">Select venue</span>
+                  </label>
+                  <div className="relative">
+                    <select
+                      value={selectedOrgId}
+                      onChange={(e) => handleOrgChange(e.target.value)}
+                      className="w-full appearance-none px-4 py-3.5 rounded-xl bg-slate-50 border border-slate-200 text-sm font-medium text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600 transition-all cursor-pointer"
+                    >
+                      {organizations.map((org) => (
+                        <option key={org.id} value={org.id}>
+                          {org.name} ({org.type})
+                        </option>
+                      ))}
+                      {organizations.length === 0 && (
+                        <option value="">Metropolitan Central Hospital (HOSPITAL)</option>
+                      )}
+                    </select>
+                    <ChevronDown className="w-4 h-4 text-slate-400 absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  </div>
+                </div>
+
+                {/* 2. FACILITY LOCATION DISPLAY */}
+                <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 flex items-start gap-2.5 text-xs text-slate-600">
+                  <MapPin className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-bold text-slate-800">Facility Location: </span>
+                    <span>
+                      {organizations.find((o) => o.id === selectedOrgId)?.address ||
+                        '742 Evergreen Healthcare Blvd, Medical District'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* 3. SELECT DEPARTMENT / SERVICE */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                    Department / Service
+                  </label>
+                  <div className="relative">
+                    <select
+                      value={selectedService}
+                      onChange={(e) => setSelectedService(e.target.value)}
+                      className="w-full appearance-none px-4 py-3.5 rounded-xl bg-slate-50 border border-slate-200 text-sm font-medium text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600 transition-all cursor-pointer"
+                    >
+                      {services
+                        .filter((s) => !selectedOrgId || s.organizationId === selectedOrgId)
+                        .map((srv) => (
+                          <option key={srv.id} value={srv.id}>
+                            {srv.name} (~{srv.averageServiceTime || 8} min avg wait)
+                          </option>
+                        ))}
+                      {services.filter((s) => !selectedOrgId || s.organizationId === selectedOrgId).length === 0 && (
+                        <>
+                          <option value="General Consultation">General Consultation (~8 min avg)</option>
+                          <option value="Cardiology Specialist">Cardiology Specialist (~15 min avg)</option>
+                          <option value="Pharmacy & Dispensing">Pharmacy & Dispensing (~5 min avg)</option>
+                        </>
+                      )}
+                    </select>
+                    <ChevronDown className="w-4 h-4 text-slate-400 absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  </div>
+                  <p className="text-xs text-slate-400 mt-1.5">
+                    Select your service department to get assigned to the optimal queue counter.
+                  </p>
+                </div>
+
+                {/* 4. FULL NAME */}
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                    Full Name
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Enter your full name"
+                    value={customerName}
+                    onChange={(e) => setCustomerName(e.target.value)}
+                    className="w-full px-4 py-3.5 rounded-xl bg-slate-50 border border-slate-200 text-sm font-medium text-slate-900 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600 transition-all placeholder:text-slate-400"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="w-full py-4 px-6 rounded-2xl bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-bold text-base shadow-lg shadow-blue-600/25 transition-all flex items-center justify-center gap-2 group cursor-pointer"
+                >
+                  {submitting ? (
+                    <>
+                      <Clock className="w-5 h-5 animate-spin" />
+                      Generating Your Token...
+                    </>
+                  ) : (
+                    <>
+                      Join Queue
+                      <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                    </>
+                  )}
+                </button>
+              </form>
+
+              {/* BENEFITS LIST */}
+              <div className="mt-8 pt-8 border-t border-slate-100 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                  <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                  </div>
+                  Live Queue Status
+                </div>
+
+                <div className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                  <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                  </div>
+                  Estimated Waiting Time
+                </div>
+
+                <div className="flex items-center gap-2 text-xs font-semibold text-slate-700">
+                  <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                  </div>
+                  Digital Queue Number
+                </div>
+              </div>
+            </div>
+          )}
+        </>
       )}
 
-      {/* TAB 2: ACTIVE TOKENS TRACKER */}
-      {activeTab === 'MY_TOKENS' && (
-        <div className="space-y-6">
+      {/* VIEW MODE 2: MULTI-VENUE QUEUES BROWSER (Preserves existing multi-venue feature) */}
+      {viewMode === 'EXPLORE_ALL' && (
+        <div className="bg-white rounded-3xl border border-slate-200 p-8 shadow-md space-y-6">
           <div className="flex items-center justify-between">
-            <h2 className="text-lg font-bold text-slate-900">Your Active Digital Tokens</h2>
+            <div>
+              <h2 className="text-lg font-bold text-slate-900">Hospital & Banking Queues</h2>
+              <p className="text-xs text-slate-500">Take tokens for specialized departments across our network</p>
+            </div>
             <button
-              onClick={fetchData}
-              className="px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center gap-1.5 transition-colors"
+              onClick={() => setViewMode('SIMPLE')}
+              className="text-xs font-bold text-blue-600 hover:underline"
             >
-              <RefreshCw className="w-3.5 h-3.5" />
-              Refresh
+              Back to Main Form
             </button>
           </div>
 
-          {activeTokens.length === 0 ? (
-            <div className="bg-white p-12 rounded-2xl border border-slate-200 shadow-xs text-center max-w-md mx-auto">
-              <Clock className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-              <h3 className="font-bold text-slate-800 text-base mb-1">No Active Tokens</h3>
-              <p className="text-xs text-slate-500 mb-6">
-                You currently don't have any active queue tokens. Select a venue and service to take a new token.
-              </p>
-              <button
-                onClick={() => setActiveTab('JOIN')}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-xs"
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {organizations.map((org) => (
+              <div
+                key={org.id}
+                onClick={() => setSelectedOrgId(org.id)}
+                className={`p-4 rounded-2xl border cursor-pointer transition-all ${
+                  selectedOrgId === org.id
+                    ? 'border-blue-600 bg-blue-50/50 shadow-xs'
+                    : 'border-slate-200 hover:border-slate-300'
+                }`}
               >
-                Join a Queue Now
-              </button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {activeTokens.map((token) => {
-                const isCalled = token.status === 'CALLED';
-                const isServing = token.status === 'SERVING';
+                <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded bg-slate-100 text-slate-700">
+                  {org.type.replace('_', ' ')}
+                </span>
+                <h4 className="font-bold text-sm text-slate-900 mt-2">{org.name}</h4>
+                <p className="text-xs text-slate-500 mt-1 line-clamp-1">{org.address}</p>
+              </div>
+            ))}
+          </div>
 
-                return (
+          <div className="space-y-3">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">Available Services</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {services
+                .filter((s) => !selectedOrgId || s.organizationId === selectedOrgId)
+                .map((srv) => (
                   <div
-                    key={token.id}
-                    className={`bg-white rounded-2xl border transition-all p-6 relative overflow-hidden shadow-md ${
-                      isCalled
-                        ? 'border-blue-500 ring-2 ring-blue-500/20 bg-gradient-to-b from-blue-50/40 to-white'
-                        : isServing
-                        ? 'border-emerald-500 bg-gradient-to-b from-emerald-50/40 to-white'
-                        : 'border-slate-200'
-                    }`}
+                    key={srv.id}
+                    onClick={() => {
+                      setSelectedService(srv.name);
+                      setViewMode('SIMPLE');
+                    }}
+                    className="p-4 rounded-2xl border border-slate-200 hover:border-blue-500 hover:bg-blue-50/40 cursor-pointer transition-all flex items-center justify-between"
                   >
-                    {/* Status Ribbon */}
-                    <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">
-                      <div>
-                        <div className="text-xs text-slate-400 font-medium">Service & Venue</div>
-                        <h4 className="font-bold text-base text-slate-900 leading-tight">{token.serviceName}</h4>
-                        <p className="text-xs text-slate-500">{token.organizationName}</p>
-                      </div>
-
-                      <span className={`px-3 py-1 text-xs font-bold rounded-full border ${
-                        isCalled ? 'bg-blue-600 text-white border-blue-600 animate-pulse' :
-                        isServing ? 'bg-emerald-600 text-white border-emerald-600' :
-                        'bg-amber-50 text-amber-700 border-amber-200'
-                      }`}>
-                        {token.status}
-                      </span>
-                    </div>
-
-                    {/* Calling Alert Banner */}
-                    {isCalled && (
-                      <div className="mb-4 p-3 bg-blue-600 text-white rounded-xl text-center font-bold text-xs flex items-center justify-center gap-2 animate-bounce shadow-md">
-                        <BellRing className="w-4 h-4" />
-                        YOUR TURN! PLEASE PROCEED TO {token.counterNumber ? `COUNTER ${token.counterNumber}` : 'THE COUNTER'}
-                      </div>
-                    )}
-
-                    {/* Metric Cards Grid */}
-                    <div className="grid grid-cols-3 gap-3 text-center mb-6">
-                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <div className="text-[11px] text-slate-400 font-medium mb-0.5">Your Token</div>
-                        <div className="text-2xl font-black text-blue-600">{token.tokenNumber}</div>
-                      </div>
-
-                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <div className="text-[11px] text-slate-400 font-medium mb-0.5">People Ahead</div>
-                        <div className="text-2xl font-black text-slate-800">
-                          {isServing ? '0 (Serving)' : isCalled ? '0 (Called)' : token.peopleAhead}
-                        </div>
-                      </div>
-
-                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <div className="text-[11px] text-slate-400 font-medium mb-0.5">Est. Wait</div>
-                        <div className="text-2xl font-black text-slate-800">
-                          {isServing ? 'In Progress' : isCalled ? 'Immediate' : `~${token.estimatedWaitMinutes}m`}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Details and Actions */}
-                    <div className="flex items-center justify-between text-xs text-slate-500 pt-3 border-t border-slate-100">
-                      <div>
-                        Assigned Counter:{' '}
-                        <span className="font-bold text-slate-800">
-                          {token.counterNumber ? token.counterNumber : 'Pending Assignment'}
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-black bg-blue-600 text-white">
+                          Prefix {srv.codePrefix}
                         </span>
+                        <h4 className="font-bold text-xs text-slate-900">{srv.name}</h4>
                       </div>
-
-                      {token.status === 'WAITING' && (
-                        <button
-                          onClick={() => setTokenToCancel(token)}
-                          className="text-rose-600 hover:text-rose-700 font-semibold flex items-center gap-1 transition-colors"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                          Cancel Token
-                        </button>
-                      )}
+                      <p className="text-xs text-slate-500 mt-1">~{srv.averageServiceTime} min avg wait</p>
                     </div>
+                    <ArrowRight className="w-4 h-4 text-blue-600" />
                   </div>
-                );
-              })}
+                ))}
             </div>
-          )}
+          </div>
         </div>
       )}
 
-      {/* TAB 3: VISIT HISTORY */}
-      {activeTab === 'HISTORY' && (
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-          <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+      {/* ========================================================
+         FEATURE 16: HOW SMARTQUEUE WORKS (4-Step Guide)
+         ======================================================== */}
+      <div className="mt-16 pt-12 border-t border-slate-200">
+        <div className="text-center mb-10">
+          <span className="text-xs font-bold uppercase tracking-wider text-blue-600">
+            Simple 4-Step Process
+          </span>
+          <h2 className="text-2xl font-extrabold text-slate-900 mt-1">
+            How SmartQueue Works
+          </h2>
+          <p className="text-xs text-slate-500 mt-1">
+            Experience frictionless queues from your smartphone or kiosk
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          {/* Step 1 */}
+          <div className="p-6 rounded-2xl bg-white border border-slate-200 shadow-xs flex flex-col justify-between">
             <div>
-              <h2 className="text-base font-bold text-slate-900">Queue Visit History</h2>
-              <p className="text-xs text-slate-500">Record of completed, skipped, and cancelled queue visits</p>
+              <div className="text-3xl font-black text-blue-600/30 mb-2 font-mono">01</div>
+              <h3 className="font-bold text-sm text-slate-900 mb-1">Join Queue</h3>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Enter your name and select the service you require from the dropdown.
+              </p>
+            </div>
+            <div className="mt-4 pt-4 border-t border-slate-100 text-[11px] font-semibold text-blue-600">
+              Instant generation
             </div>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-slate-600">
-              <thead className="bg-slate-50 text-slate-700 uppercase font-bold border-b border-slate-200">
-                <tr>
-                  <th className="px-6 py-3">Token</th>
-                  <th className="px-6 py-3">Organization & Service</th>
-                  <th className="px-6 py-3">Counter</th>
-                  <th className="px-6 py-3">Status</th>
-                  <th className="px-6 py-3">Wait Time</th>
-                  <th className="px-6 py-3">Service Time</th>
-                  <th className="px-6 py-3">Completed Date</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {historyRecords.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="px-6 py-8 text-center text-slate-400">
-                      No past queue records found.
-                    </td>
-                  </tr>
-                ) : (
-                  historyRecords.map((hist) => (
-                    <tr key={hist.id} className="hover:bg-slate-50/60 transition-colors">
-                      <td className="px-6 py-3.5 font-black text-blue-600">{hist.tokenNumber}</td>
-                      <td className="px-6 py-3.5">
-                        <div className="font-bold text-slate-900">{hist.serviceName}</div>
-                        <div className="text-[11px] text-slate-400">{hist.organizationName}</div>
-                      </td>
-                      <td className="px-6 py-3.5 font-medium">{hist.counterNumber || 'Counter 01'}</td>
-                      <td className="px-6 py-3.5">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 uppercase">
-                          {hist.status}
-                        </span>
-                      </td>
-                      <td className="px-6 py-3.5">{hist.waitingTimeMinutes} mins</td>
-                      <td className="px-6 py-3.5">{hist.serviceTimeMinutes} mins</td>
-                      <td className="px-6 py-3.5 text-slate-400">
-                        {new Date(hist.completedAt).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+          {/* Step 2 */}
+          <div className="p-6 rounded-2xl bg-white border border-slate-200 shadow-xs flex flex-col justify-between">
+            <div>
+              <div className="text-3xl font-black text-blue-600/30 mb-2 font-mono">02</div>
+              <h3 className="font-bold text-sm text-slate-900 mb-1">Get Your Token</h3>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Receive your digital queue number (e.g. Q32) instantly on your screen.
+              </p>
+            </div>
+            <div className="mt-4 pt-4 border-t border-slate-100 text-[11px] font-semibold text-blue-600">
+              No paper waste
+            </div>
           </div>
-        </div>
-      )}
 
-      {/* Confirmation Modal for Token Cancellation */}
-      {tokenToCancel && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl border border-slate-200">
-            <h3 className="text-base font-bold text-slate-900 mb-2">Cancel Token {tokenToCancel.tokenNumber}?</h3>
-            <p className="text-xs text-slate-600 mb-6 leading-relaxed">
-              Are you sure you want to leave the queue? You will forfeit your current position of {tokenToCancel.peopleAhead} people ahead.
-            </p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => setTokenToCancel(null)}
-                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-xl transition-colors"
-              >
-                Keep Token
-              </button>
-              <button
-                onClick={handleConfirmCancel}
-                disabled={actionLoading}
-                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl shadow-xs transition-colors"
-              >
-                {actionLoading ? 'Cancelling...' : 'Yes, Cancel'}
-              </button>
+          {/* Step 3 */}
+          <div className="p-6 rounded-2xl bg-white border border-slate-200 shadow-xs flex flex-col justify-between">
+            <div>
+              <div className="text-3xl font-black text-blue-600/30 mb-2 font-mono">03</div>
+              <h3 className="font-bold text-sm text-slate-900 mb-1">Track Your Position</h3>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Monitor real-time people ahead and dynamic waiting time updates.
+              </p>
+            </div>
+            <div className="mt-4 pt-4 border-t border-slate-100 text-[11px] font-semibold text-blue-600">
+              Auto-updating SSE
+            </div>
+          </div>
+
+          {/* Step 4 */}
+          <div className="p-6 rounded-2xl bg-white border border-slate-200 shadow-xs flex flex-col justify-between">
+            <div>
+              <div className="text-3xl font-black text-blue-600/30 mb-2 font-mono">04</div>
+              <h3 className="font-bold text-sm text-slate-900 mb-1">Get Served</h3>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Receive an alert when called, and proceed comfortably to Counter 1.
+              </p>
+            </div>
+            <div className="mt-4 pt-4 border-t border-slate-100 text-[11px] font-semibold text-blue-600">
+              Chime &amp; banner alert
             </div>
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 };

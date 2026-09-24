@@ -76,6 +76,8 @@ export interface QueueToken {
   positionInQueue: number;
   peopleAhead: number;
   estimatedWaitMinutes: number;
+  nowServing?: string;
+  sequencePath?: string[];
   calledAt?: string;
   serviceStartedAt?: string;
   completedAt?: string;

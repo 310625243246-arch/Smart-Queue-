@@ -9,6 +9,28 @@
     <meta property="og:description" content="Smart digital queue management system for hospitals, banks, and service centers with real-time tracking." />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
+    <script>
+      // Prevent Vite dev HMR WebSocket connection failure in Cloud Run / preview iframes from showing unhandled rejection error overlay
+      window.addEventListener('unhandledrejection', function(event) {
+        var reason = event.reason;
+        var msg = (reason && (reason.message || String(reason))) || '';
+        if (msg.indexOf('WebSocket') !== -1 || msg.indexOf('vite:ws') !== -1 || msg.indexOf('closed without opened') !== -1) {
+          event.preventDefault();
+          if (event.stopImmediatePropagation) {
+            event.stopImmediatePropagation();
+          }
+        }
+      });
+      window.addEventListener('error', function(event) {
+        var msg = (event && (event.message || '')) || '';
+        if (msg.indexOf('WebSocket') !== -1 || msg.indexOf('closed without opened') !== -1) {
+          event.preventDefault();
+          if (event.stopImmediatePropagation) {
+            event.stopImmediatePropagation();
+          }
+        }
+      });
+    </script>
   </head>
   <body>
     <div id="root"></div>

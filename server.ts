@@ -1,7 +1,8 @@
-import express, { Request, Response, NextFunction } from 'express';
+import express from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import path from 'path';
+import fs from 'fs';
 import cors from 'cors';
-import { createServer as createViteServer } from 'vite';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
@@ -9,7 +10,7 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const PORT = 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'smartqueue-secure-jwt-secret-key-2026';
 
 // ==============================================================================
@@ -156,13 +157,18 @@ const redisCache = {
     this.locks.delete(key);
   },
 
-  getNextSequence(prefix: string): number {
-    const current = this.sequenceCounters.get(prefix) || 100;
+  getNextSequence(key: string): number {
+    const current = this.sequenceCounters.get(key) || 0;
     const next = current + 1;
-    this.sequenceCounters.set(prefix, next);
+    this.sequenceCounters.set(key, next);
     return next;
   },
 };
+
+export function formatTokenNumber(prefix: string, seq: number): string {
+  const pad = seq < 10 ? `0${seq}` : `${seq}`;
+  return `${prefix}${pad}`;
+}
 
 // Real-Time Server-Sent Events (SSE) Hub
 type SSEClient = {
@@ -283,7 +289,80 @@ function seedDatabase() {
     updatedAt: now,
   };
 
-  db.organizations.push(orgHospital, orgBank, orgGovt);
+  const orgMain: DBOrganization = {
+    id: 'org-main-1',
+    name: 'SmartQueue Service Center',
+    type: 'SERVICE_CENTER',
+    address: '100 Metro Avenue, Main Concourse',
+    contactEmail: 'contact@smartqueue.com',
+    contactPhone: '+1 (555) 010-3344',
+    isActive: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  db.organizations.push(orgMain, orgHospital, orgBank, orgGovt);
+
+  // Core SmartQueue Services
+  const srvGeneralEnquiry: DBService = {
+    id: 'srv-gen-enquiry',
+    organizationId: orgMain.id,
+    name: 'General Enquiry',
+    codePrefix: 'Q',
+    description: 'General reception, quick information, and queue routing.',
+    averageServiceTime: 8,
+    isActive: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const srvCustSupport: DBService = {
+    id: 'srv-cust-support',
+    organizationId: orgMain.id,
+    name: 'Customer Support',
+    codePrefix: 'Q',
+    description: 'Technical troubleshooting, claims, and inquiries.',
+    averageServiceTime: 8,
+    isActive: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const srvAccountService: DBService = {
+    id: 'srv-acc-service',
+    organizationId: orgMain.id,
+    name: 'Account Service',
+    codePrefix: 'Q',
+    description: 'Account settings, statements, and official service registration.',
+    averageServiceTime: 8,
+    isActive: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const srvConsultation: DBService = {
+    id: 'srv-consultation',
+    organizationId: orgMain.id,
+    name: 'Consultation',
+    codePrefix: 'Q',
+    description: 'One-on-one specialist consultation and case review.',
+    averageServiceTime: 8,
+    isActive: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const srvOther: DBService = {
+    id: 'srv-other',
+    organizationId: orgMain.id,
+    name: 'Other',
+    codePrefix: 'Q',
+    description: 'Special requests and miscellaneous counter services.',
+    averageServiceTime: 8,
+    isActive: true,
+    createdAt: now,
+    updatedAt: now,
+  };
 
   // Services
   // Hospital Services
@@ -291,9 +370,45 @@ function seedDatabase() {
     id: 'srv-gen-1',
     organizationId: orgHospital.id,
     name: 'General Consultation',
-    codePrefix: 'A',
+    codePrefix: 'Q',
     description: 'Routine physician consultation, diagnostics check-up, and general triage.',
-    averageServiceTime: 8, // 8 mins
+    averageServiceTime: 8,
+    isActive: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const srvPharm: DBService = {
+    id: 'srv-pharm-1',
+    organizationId: orgHospital.id,
+    name: 'Pharmacy',
+    codePrefix: 'P',
+    description: 'Prescription pickup, medication consultation, and dispensation.',
+    averageServiceTime: 4,
+    isActive: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const srvLab: DBService = {
+    id: 'srv-lab-1',
+    organizationId: orgHospital.id,
+    name: 'Laboratory',
+    codePrefix: 'L',
+    description: 'Blood sample collection, urinalysis, and rapid lab pathology.',
+    averageServiceTime: 6,
+    isActive: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const srvBilling: DBService = {
+    id: 'srv-bill-1',
+    organizationId: orgHospital.id,
+    name: 'Billing',
+    codePrefix: 'B',
+    description: 'Payment settlement, invoice processing, insurance claims, and cashier.',
+    averageServiceTime: 5,
     isActive: true,
     createdAt: now,
     updatedAt: now,
@@ -306,30 +421,6 @@ function seedDatabase() {
     codePrefix: 'C',
     description: 'Cardiovascular examination, ECG analysis, and specialist review.',
     averageServiceTime: 15,
-    isActive: true,
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  const srvPharm: DBService = {
-    id: 'srv-pharm-1',
-    organizationId: orgHospital.id,
-    name: 'Pharmacy & Dispensation',
-    codePrefix: 'P',
-    description: 'Prescription pickup, medication consultation, and dispensation.',
-    averageServiceTime: 4,
-    isActive: true,
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  const srvLab: DBService = {
-    id: 'srv-lab-1',
-    organizationId: orgHospital.id,
-    name: 'Diagnostic Laboratory',
-    codePrefix: 'L',
-    description: 'Blood sample collection, urinalysis, and rapid lab pathology.',
-    averageServiceTime: 6,
     isActive: true,
     createdAt: now,
     updatedAt: now,
@@ -398,16 +489,28 @@ function seedDatabase() {
   };
 
   db.services.push(
-    srvGenConsult, srvCardio, srvPharm, srvLab,
+    srvGeneralEnquiry, srvCustSupport, srvAccountService, srvConsultation, srvOther,
+    srvGenConsult, srvPharm, srvLab, srvBilling, srvCardio,
     srvDeposit, srvAccount, srvLoan,
     srvDocVerify, srvCitizenSupport
   );
 
   // Counters
+  const cntMain1: DBCounter = {
+    id: 'cnt-main-1',
+    organizationId: orgMain.id,
+    counterNumber: 'Counter 1',
+    serviceId: srvGeneralEnquiry.id,
+    staffId: staffUser1.id,
+    status: 'ACTIVE',
+    createdAt: now,
+    updatedAt: now,
+  };
+
   const cntHosp1: DBCounter = {
     id: 'cnt-hosp-1',
     organizationId: orgHospital.id,
-    counterNumber: 'Counter 01',
+    counterNumber: 'Counter 01 (Consultation)',
     serviceId: srvGenConsult.id,
     staffId: staffUser1.id,
     status: 'ACTIVE',
@@ -418,7 +521,7 @@ function seedDatabase() {
   const cntHosp2: DBCounter = {
     id: 'cnt-hosp-2',
     organizationId: orgHospital.id,
-    counterNumber: 'Counter 02',
+    counterNumber: 'Counter 02 (Consultation)',
     serviceId: srvGenConsult.id,
     status: 'ACTIVE',
     createdAt: now,
@@ -430,6 +533,26 @@ function seedDatabase() {
     organizationId: orgHospital.id,
     counterNumber: 'Counter 03 (Pharmacy)',
     serviceId: srvPharm.id,
+    status: 'ACTIVE',
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const cntHosp4: DBCounter = {
+    id: 'cnt-hosp-4',
+    organizationId: orgHospital.id,
+    counterNumber: 'Counter 04 (Laboratory)',
+    serviceId: srvLab.id,
+    status: 'ACTIVE',
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const cntHosp5: DBCounter = {
+    id: 'cnt-hosp-5',
+    organizationId: orgHospital.id,
+    counterNumber: 'Counter 05 (Billing)',
+    serviceId: srvBilling.id,
     status: 'ACTIVE',
     createdAt: now,
     updatedAt: now,
@@ -466,131 +589,248 @@ function seedDatabase() {
     updatedAt: now,
   };
 
-  db.counters.push(cntHosp1, cntHosp2, cntHosp3, cntBank1, cntBank2, cntGovt1);
+  db.counters.push(cntMain1, cntHosp1, cntHosp2, cntHosp3, cntHosp4, cntHosp5, cntBank1, cntBank2, cntGovt1);
 
-  // Initial Tokens Seed (Representing live realistic queue states)
-  // General Consultation Queue:
-  // A101 (Completed) -> A102 (Serving at Counter 01) -> A103 (Waiting) -> A104 (Waiting) -> A105 (Waiting - Alex Johnson)
-  redisCache.sequenceCounters.set('A', 105);
-  redisCache.sequenceCounters.set('B', 103);
-  redisCache.sequenceCounters.set('D', 102);
+  // Initial Tokens Seed (Representing live realistic separate queue states per service)
+  // General Consultation Queue: Q01 (Completed) -> Q02 (Serving) -> Q03 (Waiting) -> Q04 (Waiting)
+  redisCache.sequenceCounters.set(srvGenConsult.id, 4);
+  redisCache.sequenceCounters.set(srvPharm.id, 4);
+  redisCache.sequenceCounters.set(srvLab.id, 3);
+  redisCache.sequenceCounters.set(srvBilling.id, 3);
+  redisCache.sequenceCounters.set('Q', 30);
+  redisCache.sequenceCounters.set('P', 30);
+  redisCache.sequenceCounters.set('L', 30);
+  redisCache.sequenceCounters.set('B', 30);
 
-  const tA101: DBQueueToken = {
-    id: 'tok-a101',
-    tokenNumber: 'A101',
-    customerName: 'Claire Redfield',
-    customerEmail: 'claire@example.com',
-    serviceId: srvGenConsult.id,
-    organizationId: orgHospital.id,
-    counterId: cntHosp1.id,
-    staffId: staffUser1.id,
-    status: 'COMPLETED',
-    sequenceNumber: 101,
-    calledAt: new Date(Date.now() - 35 * 60 * 1000).toISOString(),
-    serviceStartedAt: new Date(Date.now() - 34 * 60 * 1000).toISOString(),
-    completedAt: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
-    createdAt: new Date(Date.now() - 50 * 60 * 1000).toISOString(),
-    updatedAt: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
-  };
-
-  const tA102: DBQueueToken = {
-    id: 'tok-a102',
-    tokenNumber: 'A102',
+  // 1. General Consultation Tokens (Q01, Q02, Q03, Q04)
+  const tQ01: DBQueueToken = {
+    id: 'tok-q01',
+    tokenNumber: 'Q01',
     customerName: 'Robert Vance',
     customerEmail: 'robert@example.com',
     serviceId: srvGenConsult.id,
     organizationId: orgHospital.id,
     counterId: cntHosp1.id,
     staffId: staffUser1.id,
-    status: 'SERVING',
-    sequenceNumber: 102,
-    calledAt: new Date(Date.now() - 6 * 60 * 1000).toISOString(),
-    serviceStartedAt: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
-    createdAt: new Date(Date.now() - 40 * 60 * 1000).toISOString(),
-    updatedAt: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+    status: 'COMPLETED',
+    sequenceNumber: 1,
+    calledAt: new Date(Date.now() - 35 * 60 * 1000).toISOString(),
+    serviceStartedAt: new Date(Date.now() - 33 * 60 * 1000).toISOString(),
+    completedAt: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
+    createdAt: new Date(Date.now() - 50 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
   };
-  cntHosp1.currentTokenId = tA102.id;
 
-  const tA103: DBQueueToken = {
-    id: 'tok-a103',
-    tokenNumber: 'A103',
+  const tQ02: DBQueueToken = {
+    id: 'tok-q02',
+    tokenNumber: 'Q02',
     customerName: 'Elena Rostova',
     customerEmail: 'elena@example.com',
     serviceId: srvGenConsult.id,
     organizationId: orgHospital.id,
-    status: 'WAITING',
-    sequenceNumber: 103,
+    counterId: cntHosp1.id,
+    staffId: staffUser1.id,
+    status: 'SERVING',
+    sequenceNumber: 2,
+    calledAt: new Date(Date.now() - 6 * 60 * 1000).toISOString(),
+    serviceStartedAt: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
     createdAt: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
-    updatedAt: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
   };
+  cntHosp1.currentTokenId = tQ02.id;
 
-  const tA104: DBQueueToken = {
-    id: 'tok-a104',
-    tokenNumber: 'A104',
+  const tQ03: DBQueueToken = {
+    id: 'tok-q03',
+    tokenNumber: 'Q03',
     customerName: 'David Kim',
     customerEmail: 'david@example.com',
     serviceId: srvGenConsult.id,
     organizationId: orgHospital.id,
     status: 'WAITING',
-    sequenceNumber: 104,
+    sequenceNumber: 3,
     createdAt: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
     updatedAt: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
   };
 
-  const tA105: DBQueueToken = {
-    id: 'tok-a105',
-    tokenNumber: 'A105',
+  const tQ04: DBQueueToken = {
+    id: 'tok-q04',
+    tokenNumber: 'Q04',
     customerId: customerUser.id,
     customerName: 'Alex Johnson',
     customerEmail: 'customer@smartqueue.com',
     serviceId: srvGenConsult.id,
     organizationId: orgHospital.id,
     status: 'WAITING',
-    sequenceNumber: 105,
+    sequenceNumber: 4,
     createdAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
     updatedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
   };
 
-  // Bank Tokens
-  const tB101: DBQueueToken = {
-    id: 'tok-b101',
-    tokenNumber: 'B101',
-    customerName: 'Samira Khan',
-    customerEmail: 'samira@example.com',
-    serviceId: srvDeposit.id,
-    organizationId: orgBank.id,
-    counterId: cntBank1.id,
-    staffId: staffUser2.id,
-    status: 'SERVING',
-    sequenceNumber: 101,
-    calledAt: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
-    serviceStartedAt: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
-    createdAt: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
-    updatedAt: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+  // 2. Pharmacy Tokens (P01, P02, P03, P04)
+  const tP01: DBQueueToken = {
+    id: 'tok-p01',
+    tokenNumber: 'P01',
+    customerName: 'Claire Redfield',
+    customerEmail: 'claire@example.com',
+    serviceId: srvPharm.id,
+    organizationId: orgHospital.id,
+    counterId: cntHosp3.id,
+    status: 'COMPLETED',
+    sequenceNumber: 1,
+    calledAt: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
+    serviceStartedAt: new Date(Date.now() - 24 * 60 * 1000).toISOString(),
+    completedAt: new Date(Date.now() - 18 * 60 * 1000).toISOString(),
+    createdAt: new Date(Date.now() - 40 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 18 * 60 * 1000).toISOString(),
   };
-  cntBank1.currentTokenId = tB101.id;
 
-  const tB102: DBQueueToken = {
-    id: 'tok-b102',
-    tokenNumber: 'B102',
+  const tP02: DBQueueToken = {
+    id: 'tok-p02',
+    tokenNumber: 'P02',
+    customerName: 'Sarah Connor',
+    customerEmail: 'sarah@example.com',
+    serviceId: srvPharm.id,
+    organizationId: orgHospital.id,
+    counterId: cntHosp3.id,
+    status: 'SERVING',
+    sequenceNumber: 2,
+    calledAt: new Date(Date.now() - 4 * 60 * 1000).toISOString(),
+    serviceStartedAt: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
+    createdAt: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
+  };
+  cntHosp3.currentTokenId = tP02.id;
+
+  const tP03: DBQueueToken = {
+    id: 'tok-p03',
+    tokenNumber: 'P03',
     customerName: 'Lucas Martin',
     customerEmail: 'lucas@example.com',
-    serviceId: srvDeposit.id,
-    organizationId: orgBank.id,
+    serviceId: srvPharm.id,
+    organizationId: orgHospital.id,
     status: 'WAITING',
-    sequenceNumber: 102,
+    sequenceNumber: 3,
+    createdAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+  };
+
+  const tP04: DBQueueToken = {
+    id: 'tok-p04',
+    tokenNumber: 'P04',
+    customerName: 'Amina Yusuf',
+    customerEmail: 'amina@example.com',
+    serviceId: srvPharm.id,
+    organizationId: orgHospital.id,
+    status: 'WAITING',
+    sequenceNumber: 4,
+    createdAt: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+  };
+
+  // 3. Laboratory Tokens (L01, L02, L03)
+  const tL01: DBQueueToken = {
+    id: 'tok-l01',
+    tokenNumber: 'L01',
+    customerName: 'Michael Chen',
+    customerEmail: 'chen@example.com',
+    serviceId: srvLab.id,
+    organizationId: orgHospital.id,
+    counterId: cntHosp4.id,
+    status: 'COMPLETED',
+    sequenceNumber: 1,
+    calledAt: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+    serviceStartedAt: new Date(Date.now() - 28 * 60 * 1000).toISOString(),
+    completedAt: new Date(Date.now() - 14 * 60 * 1000).toISOString(),
+    createdAt: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 14 * 60 * 1000).toISOString(),
+  };
+
+  const tL02: DBQueueToken = {
+    id: 'tok-l02',
+    tokenNumber: 'L02',
+    customerName: 'Hannah Abbott',
+    customerEmail: 'hannah@example.com',
+    serviceId: srvLab.id,
+    organizationId: orgHospital.id,
+    counterId: cntHosp4.id,
+    status: 'SERVING',
+    sequenceNumber: 2,
+    calledAt: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+    serviceStartedAt: new Date(Date.now() - 4 * 60 * 1000).toISOString(),
+    createdAt: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 4 * 60 * 1000).toISOString(),
+  };
+  cntHosp4.currentTokenId = tL02.id;
+
+  const tL03: DBQueueToken = {
+    id: 'tok-l03',
+    tokenNumber: 'L03',
+    customerName: 'Jonathan Davis',
+    customerEmail: 'jonathan@example.com',
+    serviceId: srvLab.id,
+    organizationId: orgHospital.id,
+    status: 'WAITING',
+    sequenceNumber: 3,
     createdAt: new Date(Date.now() - 8 * 60 * 1000).toISOString(),
     updatedAt: new Date(Date.now() - 8 * 60 * 1000).toISOString(),
   };
 
-  db.tokens.push(tA101, tA102, tA103, tA104, tA105, tB101, tB102);
+  // 4. Billing Tokens (B01, B02, B03)
+  const tB01: DBQueueToken = {
+    id: 'tok-b01',
+    tokenNumber: 'B01',
+    customerName: 'Samira Khan',
+    customerEmail: 'samira@example.com',
+    serviceId: srvBilling.id,
+    organizationId: orgHospital.id,
+    counterId: cntHosp5.id,
+    status: 'COMPLETED',
+    sequenceNumber: 1,
+    calledAt: new Date(Date.now() - 22 * 60 * 1000).toISOString(),
+    serviceStartedAt: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+    completedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+    createdAt: new Date(Date.now() - 35 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+  };
+
+  const tB02: DBQueueToken = {
+    id: 'tok-b02',
+    tokenNumber: 'B02',
+    customerName: 'Grace Hopper',
+    customerEmail: 'grace@example.com',
+    serviceId: srvBilling.id,
+    organizationId: orgHospital.id,
+    counterId: cntHosp5.id,
+    status: 'SERVING',
+    sequenceNumber: 2,
+    calledAt: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
+    serviceStartedAt: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+    createdAt: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+  };
+  cntHosp5.currentTokenId = tB02.id;
+
+  const tB03: DBQueueToken = {
+    id: 'tok-b03',
+    tokenNumber: 'B03',
+    customerName: 'Alan Turing',
+    customerEmail: 'alan@example.com',
+    serviceId: srvBilling.id,
+    organizationId: orgHospital.id,
+    status: 'WAITING',
+    sequenceNumber: 3,
+    createdAt: new Date(Date.now() - 6 * 60 * 1000).toISOString(),
+    updatedAt: new Date(Date.now() - 6 * 60 * 1000).toISOString(),
+  };
+
+  db.tokens.push(tQ01, tQ02, tQ03, tQ04, tP01, tP02, tP03, tP04, tL01, tL02, tL03, tB01, tB02, tB03);
 
   // Queue History Seed
   db.history.push({
     id: uuidv4(),
-    tokenId: tA101.id,
-    tokenNumber: 'A101',
-    customerName: 'Claire Redfield',
+    tokenId: tQ01.id,
+    tokenNumber: 'Q01',
+    customerName: 'Robert Vance',
     organizationId: orgHospital.id,
     organizationName: orgHospital.name,
     serviceId: srvGenConsult.id,
@@ -598,18 +838,35 @@ function seedDatabase() {
     counterNumber: cntHosp1.counterNumber,
     staffName: staffUser1.name,
     status: 'COMPLETED',
+    waitingTimeMinutes: 14,
+    serviceTimeMinutes: 8,
+    createdAt: tQ01.createdAt,
+    completedAt: tQ01.completedAt!,
+  });
+  db.history.push({
+    id: uuidv4(),
+    tokenId: tP01.id,
+    tokenNumber: 'P01',
+    customerName: 'Claire Redfield',
+    organizationId: orgHospital.id,
+    organizationName: orgHospital.name,
+    serviceId: srvPharm.id,
+    serviceName: srvPharm.name,
+    counterNumber: cntHosp3.counterNumber,
+    staffName: 'Staff Pharmacist',
+    status: 'COMPLETED',
     waitingTimeMinutes: 16,
-    serviceTimeMinutes: 9,
-    createdAt: tA101.createdAt,
-    completedAt: tA101.completedAt!,
+    serviceTimeMinutes: 6,
+    createdAt: tP01.createdAt,
+    completedAt: tP01.completedAt!,
   });
 
   // Seed Notifications
   db.notifications.push({
     id: uuidv4(),
     userId: customerUser.id,
-    tokenId: tA105.id,
-    title: 'Digital Token A105 Created',
+    tokenId: tQ04.id,
+    title: 'Digital Token Q04 Created',
     message: 'You have joined the General Consultation queue at Metropolitan Central Hospital.',
     type: 'INFO',
     isRead: false,
@@ -641,6 +898,8 @@ export interface FormattedTokenPayload {
   positionInQueue: number;
   peopleAhead: number;
   estimatedWaitMinutes: number;
+  nowServing?: string;
+  sequencePath?: string[];
   calledAt?: string;
   serviceStartedAt?: string;
   completedAt?: string;
@@ -655,9 +914,9 @@ function calculateTokenQueueStats(token: DBQueueToken): FormattedTokenPayload {
   const counter = db.counters.find((c) => c.id === token.counterId);
   const staff = db.users.find((u) => u.id === token.staffId);
 
-  // Find all tokens in same service with WAITING status created prior or equal sequence
+  // Find all tokens in same service and facility with WAITING status created prior or equal sequence
   const waitingTokensInService = db.tokens
-    .filter((t) => t.serviceId === token.serviceId && t.status === 'WAITING')
+    .filter((t) => t.serviceId === token.serviceId && t.organizationId === token.organizationId && t.status === 'WAITING')
     .sort((a, b) => a.sequenceNumber - b.sequenceNumber);
 
   const positionIndex = waitingTokensInService.findIndex((t) => t.id === token.id);
@@ -677,13 +936,36 @@ function calculateTokenQueueStats(token: DBQueueToken): FormattedTokenPayload {
 
   // Active serving counters for this service
   const activeCounters = db.counters.filter(
-    (c) => c.serviceId === token.serviceId && c.status === 'ACTIVE'
+    (c) => c.serviceId === token.serviceId && c.organizationId === token.organizationId && c.status === 'ACTIVE'
   ).length || 1;
 
+  // Formula as required:
+  // Estimated Wait = Number of people ahead * Average Service Time
   const avgServiceTime = service?.averageServiceTime || 8;
   const estimatedWaitMinutes = token.status === 'WAITING' 
-    ? Math.max(1, Math.round((peopleAhead * avgServiceTime) / activeCounters))
+    ? Math.round(peopleAhead * avgServiceTime)
     : 0;
+
+  // Active serving token strictly within this service and facility
+  const servingTokenInService = db.tokens.find(
+    (t) => t.serviceId === token.serviceId && t.organizationId === token.organizationId && (t.status === 'SERVING' || t.status === 'CALLED')
+  );
+
+  const nowServing = servingTokenInService ? servingTokenInService.tokenNumber : 'None';
+
+  // Build sequential visual progress path strictly for this service queue
+  const sequencePath: string[] = [];
+  if (servingTokenInService) {
+    sequencePath.push(servingTokenInService.tokenNumber);
+  }
+  waitingTokensInService.slice(0, positionIndex + 1).forEach((wt) => {
+    if (!sequencePath.includes(wt.tokenNumber)) {
+      sequencePath.push(wt.tokenNumber);
+    }
+  });
+  if (!sequencePath.includes(token.tokenNumber)) {
+    sequencePath.push(token.tokenNumber);
+  }
 
   return {
     id: token.id,
@@ -692,17 +974,19 @@ function calculateTokenQueueStats(token: DBQueueToken): FormattedTokenPayload {
     customerName: token.customerName,
     customerEmail: token.customerEmail,
     serviceId: token.serviceId,
-    serviceName: service ? service.name : 'Unknown Service',
+    serviceName: service ? service.name : 'General Service',
     organizationId: token.organizationId,
-    organizationName: org ? org.name : 'Unknown Organization',
+    organizationName: org ? org.name : 'SmartQueue Center',
     counterId: token.counterId,
-    counterNumber: counter ? counter.counterNumber : undefined,
+    counterNumber: counter ? counter.counterNumber : 'Counter 1',
     staffId: token.staffId,
     staffName: staff ? staff.name : undefined,
     status: token.status,
     positionInQueue,
     peopleAhead,
     estimatedWaitMinutes,
+    nowServing,
+    sequencePath,
     calledAt: token.calledAt,
     serviceStartedAt: token.serviceStartedAt,
     completedAt: token.completedAt,
@@ -872,12 +1156,12 @@ async function startServer() {
     res.json({ user: safeUser });
   });
 
-  // Demo user quick-switch endpoint for development ease
-  app.post('/api/auth/demo-switch', (req: Request, res: Response) => {
+  // Role quick-switch endpoint for role-based navigation and demo access
+  const handleRoleSwitch = (req: Request, res: Response) => {
     const { role } = req.body;
     const target = db.users.find((u) => u.role === role);
     if (!target) {
-      return res.status(404).json({ message: `No demo account found for role: ${role}` });
+      return res.status(404).json({ message: `No active account found for role: ${role}` });
     }
 
     const token = jwt.sign(
@@ -888,7 +1172,10 @@ async function startServer() {
 
     const { passwordHash: _, ...safeUser } = target;
     return res.json({ token, user: safeUser });
-  });
+  };
+
+  app.post('/api/auth/switch-role', handleRoleSwitch);
+  app.post('/api/auth/demo-switch', handleRoleSwitch);
 
   // ----------------------------------------------------------------------------
   // ORGANIZATIONS ROUTES
@@ -1120,12 +1407,20 @@ async function startServer() {
   // QUEUES & TOKEN GENERATION ROUTES
   // ----------------------------------------------------------------------------
   app.get('/api/queues', (req: Request, res: Response) => {
-    const result = db.services.map((service) => {
+    const { organizationId, facilityId } = req.query as { organizationId?: string; facilityId?: string };
+    const targetOrgId = facilityId || organizationId;
+    let servicesList = db.services;
+    if (targetOrgId) {
+      servicesList = servicesList.filter((s) => s.organizationId === targetOrgId);
+    }
+
+    const result = servicesList.map((service) => {
       const org = db.organizations.find((o) => o.id === service.organizationId);
-      const waitingTokens = db.tokens.filter((t) => t.serviceId === service.id && t.status === 'WAITING');
-      const servingTokens = db.tokens.filter((t) => t.serviceId === service.id && t.status === 'SERVING');
+      const waitingTokens = db.tokens.filter((t) => t.serviceId === service.id && t.organizationId === service.organizationId && t.status === 'WAITING');
+      const servingTokens = db.tokens.filter((t) => t.serviceId === service.id && t.organizationId === service.organizationId && (t.status === 'SERVING' || t.status === 'CALLED'));
+      const completedTokens = db.tokens.filter((t) => t.serviceId === service.id && t.organizationId === service.organizationId && t.status === 'COMPLETED');
       const currentToken = servingTokens.length > 0 ? servingTokens[0].tokenNumber : (waitingTokens[0]?.tokenNumber || 'None');
-      const activeCounters = db.counters.filter((c) => c.serviceId === service.id && c.status === 'ACTIVE').length;
+      const activeCounters = db.counters.filter((c) => c.serviceId === service.id && c.organizationId === service.organizationId && c.status === 'ACTIVE').length;
 
       return {
         id: service.id,
@@ -1133,11 +1428,14 @@ async function startServer() {
         serviceName: service.name,
         codePrefix: service.codePrefix,
         organizationId: service.organizationId,
+        facilityId: service.organizationId,
         organizationName: org ? org.name : '',
+        facilityName: org ? org.name : '',
         organizationType: org ? org.type : '',
         currentToken,
         waitingCount: waitingTokens.length,
         servingCount: servingTokens.length,
+        completedCount: completedTokens.length,
         estimatedWaitTime: Math.round((waitingTokens.length * service.averageServiceTime) / (activeCounters || 1)),
         activeCounters,
       };
@@ -1152,10 +1450,10 @@ async function startServer() {
     if (!service) return res.status(404).json({ message: 'Service queue not found' });
 
     const waitingTokens = db.tokens
-      .filter((t) => t.serviceId === serviceId && t.status === 'WAITING')
+      .filter((t) => t.serviceId === serviceId && t.organizationId === service.organizationId && t.status === 'WAITING')
       .sort((a, b) => a.sequenceNumber - b.sequenceNumber);
     const servingTokens = db.tokens
-      .filter((t) => t.serviceId === serviceId && t.status === 'SERVING');
+      .filter((t) => t.serviceId === serviceId && t.organizationId === service.organizationId && (t.status === 'SERVING' || t.status === 'CALLED'));
 
     res.json({
       serviceId,
@@ -1167,23 +1465,34 @@ async function startServer() {
     });
   });
 
-  // JOIN QUEUE (Generate Digital Token)
+  // JOIN QUEUE (Generate Digital Token strictly scoped to Facility & Service)
   app.post('/api/queues/join', (req: any, res: Response) => {
-    const { serviceId, customerName, customerEmail } = req.body;
+    const { serviceId, facilityId, organizationId, customerName, customerEmail } = req.body;
+    const targetOrgId = facilityId || organizationId;
 
-    if (!serviceId) {
-      return res.status(400).json({ message: 'Service ID is required' });
+    // Gracefully resolve service by ID or Name
+    let service = db.services.find((s) => s.id === serviceId && (!targetOrgId || s.organizationId === targetOrgId));
+    if (!service && serviceId) {
+      service = db.services.find((s) => s.id === serviceId);
+    }
+    if (!service && serviceId) {
+      service = db.services.find((s) => s.name.toLowerCase() === String(serviceId).toLowerCase() && (!targetOrgId || s.organizationId === targetOrgId));
+    }
+    if (!service && serviceId) {
+      service = db.services.find((s) => s.name.toLowerCase().includes(String(serviceId).toLowerCase()) && (!targetOrgId || s.organizationId === targetOrgId));
+    }
+    if (!service && targetOrgId) {
+      service = db.services.find((s) => s.organizationId === targetOrgId);
+    }
+    if (!service) {
+      service = db.services[0];
     }
 
-    const service = db.services.find((s) => s.id === serviceId);
-    if (!service || !service.isActive) {
+    if (!service) {
       return res.status(404).json({ message: 'Service is not active or available' });
     }
 
-    const org = db.organizations.find((o) => o.id === service.organizationId);
-    if (!org || !org.isActive) {
-      return res.status(404).json({ message: 'Organization is currently not accepting new tokens' });
-    }
+    const org = db.organizations.find((o) => o.id === service.organizationId) || db.organizations[0];
 
     // Optional user token from auth
     const authHeader = req.headers.authorization;
@@ -1205,9 +1514,9 @@ async function startServer() {
       }
     }
 
-    // Sequence Generator via Redis counter
-    const seq = redisCache.getNextSequence(service.codePrefix);
-    const tokenNumber = `${service.codePrefix}${seq}`;
+    // Sequence Generator strictly scoped to this service
+    const seq = redisCache.getNextSequence(service.id);
+    const tokenNumber = formatTokenNumber(service.codePrefix, seq);
     const now = new Date().toISOString();
 
     const newToken: DBQueueToken = {
@@ -1245,6 +1554,8 @@ async function startServer() {
     // Broadcast Real-time event to all connected dashboards
     broadcastSSE('QUEUE_ADVANCED', {
       serviceId: service.id,
+      facilityId: org.id,
+      organizationId: org.id,
       tokenNumber: newToken.tokenNumber,
       action: 'TOKEN_JOINED',
     });
@@ -1352,17 +1663,27 @@ async function startServer() {
     }
 
     try {
-      // Find oldest waiting token
+      // Find oldest waiting token strictly in this service and facility queue
       const waitingTokens = db.tokens
-        .filter((t) => t.serviceId === targetServiceId && t.status === 'WAITING')
+        .filter((t) => t.serviceId === targetServiceId && (!counter.organizationId || t.organizationId === counter.organizationId) && t.status === 'WAITING')
         .sort((a, b) => a.sequenceNumber - b.sequenceNumber);
 
       if (waitingTokens.length === 0) {
-        return res.status(404).json({ message: 'No waiting customers in this queue' });
+        return res.status(404).json({ message: 'No waiting customers in this service queue' });
       }
 
       const nextToken = waitingTokens[0];
       const now = new Date().toISOString();
+
+      // If counter already had a serving token, complete it or clear it
+      if (counter.currentTokenId) {
+        const prevServing = db.tokens.find((t) => t.id === counter.currentTokenId);
+        if (prevServing && (prevServing.status === 'CALLED' || prevServing.status === 'SERVING')) {
+          prevServing.status = 'COMPLETED';
+          prevServing.completedAt = now;
+          prevServing.updatedAt = now;
+        }
+      }
 
       // Update token state
       nextToken.status = 'CALLED';
@@ -1398,7 +1719,7 @@ async function startServer() {
 
       // Check next-in-line customer to notify "You are next in queue"
       const upcomingWaiting = db.tokens
-        .filter((t) => t.serviceId === targetServiceId && t.status === 'WAITING')
+        .filter((t) => t.serviceId === targetServiceId && (!counter.organizationId || t.organizationId === counter.organizationId) && t.status === 'WAITING')
         .sort((a, b) => a.sequenceNumber - b.sequenceNumber);
 
       if (upcomingWaiting.length > 0 && upcomingWaiting[0].customerId) {
@@ -1612,7 +1933,7 @@ async function startServer() {
   // ----------------------------------------------------------------------------
   // ADMIN DASHBOARD & STATISTICS ROUTES
   // ----------------------------------------------------------------------------
-  app.get('/api/admin/dashboard', (req: Request, res: Response) => {
+  app.get('/api/admin/dashboard', authenticateJWT, requireRole(['ADMIN']), (req: Request, res: Response) => {
     const totalCustomers = db.tokens.length;
     const waitingCustomers = db.tokens.filter((t) => t.status === 'WAITING').length;
     const currentlyServing = db.tokens.filter((t) => t.status === 'SERVING' || t.status === 'CALLED').length;
@@ -1644,7 +1965,7 @@ async function startServer() {
     });
   });
 
-  app.get('/api/admin/statistics', (req: Request, res: Response) => {
+  app.get('/api/admin/statistics', authenticateJWT, requireRole(['ADMIN']), (req: Request, res: Response) => {
     // Volume by service
     const volumeByService = db.services.map((srv) => {
       const count = db.tokens.filter((t) => t.serviceId === srv.id).length;
@@ -1683,8 +2004,321 @@ async function startServer() {
     });
   });
 
-  app.get('/api/admin/history', (req: Request, res: Response) => {
+  app.get('/api/admin/history', authenticateJWT, requireRole(['ADMIN']), (req: Request, res: Response) => {
     res.json({ history: db.history });
+  });
+
+  // Admin Live Queue Management & Quick Controls (Scoped by Facility & Service)
+  app.get('/api/admin/live-queue', authenticateJWT, requireRole(['ADMIN', 'STAFF']), (req: Request, res: Response) => {
+    const { facilityId, organizationId, serviceId } = req.query as {
+      facilityId?: string;
+      organizationId?: string;
+      serviceId?: string;
+    };
+
+    const targetOrgId = facilityId || organizationId;
+    let targetService = serviceId ? db.services.find((s) => s.id === serviceId) : undefined;
+    if (!targetService && targetOrgId) {
+      targetService = db.services.find((s) => s.organizationId === targetOrgId);
+    }
+    if (!targetService) {
+      targetService = db.services.find((s) => s.id === 'srv-gen-1') || db.services[0];
+    }
+
+    const serving = db.tokens.find(
+      (t) => t.serviceId === targetService.id && t.organizationId === targetService.organizationId && (t.status === 'SERVING' || t.status === 'CALLED')
+    );
+
+    const waitingTokens = db.tokens
+      .filter((t) => t.serviceId === targetService.id && t.organizationId === targetService.organizationId && t.status === 'WAITING')
+      .sort((a, b) => a.sequenceNumber - b.sequenceNumber);
+
+    const completedTokens = db.tokens.filter(
+      (t) => t.serviceId === targetService.id && t.organizationId === targetService.organizationId && t.status === 'COMPLETED'
+    );
+
+    res.json({
+      facilityId: targetService.organizationId,
+      serviceId: targetService.id,
+      serviceName: targetService.name,
+      nowServing: serving ? calculateTokenQueueStats(serving) : null,
+      waitingQueue: waitingTokens.map(calculateTokenQueueStats),
+      stats: {
+        totalCustomers: db.tokens.filter((t) => t.serviceId === targetService.id && t.organizationId === targetService.organizationId).length,
+        waiting: waitingTokens.length,
+        serving: serving ? 1 : 0,
+        completed: completedTokens.length,
+      },
+    });
+  });
+
+  app.post('/api/admin/call-next', authenticateJWT, requireRole(['ADMIN', 'STAFF']), (req: Request, res: Response) => {
+    const { serviceId, facilityId, organizationId } = req.body;
+    const targetOrgId = facilityId || organizationId;
+
+    let targetService = serviceId ? db.services.find((s) => s.id === serviceId) : undefined;
+    if (!targetService && targetOrgId) {
+      targetService = db.services.find((s) => s.organizationId === targetOrgId);
+    }
+    if (!targetService) {
+      targetService = db.services.find((s) => s.id === 'srv-gen-1') || db.services[0];
+    }
+
+    if (!targetService) {
+      return res.status(404).json({ message: 'Service not found' });
+    }
+
+    const now = new Date().toISOString();
+
+    // 1. Advance any existing serving customer in THIS service to completed
+    const currentServing = db.tokens.find(
+      (t) => t.serviceId === targetService.id && t.organizationId === targetService.organizationId && (t.status === 'SERVING' || t.status === 'CALLED')
+    );
+
+    if (currentServing) {
+      currentServing.status = 'COMPLETED';
+      currentServing.completedAt = now;
+      currentServing.updatedAt = now;
+
+      const org = db.organizations.find((o) => o.id === currentServing.organizationId);
+
+      // Add to audit history
+      db.history.unshift({
+        id: uuidv4(),
+        tokenId: currentServing.id,
+        tokenNumber: currentServing.tokenNumber,
+        customerName: currentServing.customerName,
+        organizationId: currentServing.organizationId,
+        organizationName: org ? org.name : 'Facility',
+        serviceId: currentServing.serviceId,
+        serviceName: targetService.name,
+        counterNumber: currentServing.counterId ? db.counters.find((c) => c.id === currentServing.counterId)?.counterNumber : 'Counter 01',
+        status: 'COMPLETED',
+        waitingTimeMinutes: 12,
+        serviceTimeMinutes: 8,
+        createdAt: currentServing.createdAt,
+        completedAt: now,
+      });
+    }
+
+    // 2. Find next waiting customer strictly in THIS service
+    const waitingTokens = db.tokens
+      .filter((t) => t.serviceId === targetService.id && t.organizationId === targetService.organizationId && t.status === 'WAITING')
+      .sort((a, b) => a.sequenceNumber - b.sequenceNumber);
+
+    if (waitingTokens.length === 0) {
+      broadcastSSE('QUEUE_ADVANCED', { action: 'QUEUE_EMPTY', serviceId: targetService.id });
+      return res.status(404).json({ message: `No waiting customers in ${targetService.name} queue.` });
+    }
+
+    const nextToken = waitingTokens[0];
+    const counter = db.counters.find((c) => c.serviceId === targetService.id && c.organizationId === targetService.organizationId) || db.counters[0];
+
+    nextToken.status = 'SERVING';
+    nextToken.counterId = counter?.id;
+    nextToken.calledAt = now;
+    nextToken.serviceStartedAt = now;
+    nextToken.updatedAt = now;
+
+    if (counter) {
+      counter.currentTokenId = nextToken.id;
+    }
+
+    broadcastSSE('QUEUE_ADVANCED', {
+      action: 'TOKEN_CALLED',
+      serviceId: targetService.id,
+      tokenNumber: nextToken.tokenNumber,
+      counterNumber: counter?.counterNumber || 'Counter 01',
+      customerName: nextToken.customerName,
+    });
+
+    res.json({
+      message: `Token ${nextToken.tokenNumber} is now serving for ${targetService.name}!`,
+      token: calculateTokenQueueStats(nextToken),
+    });
+  });
+
+  app.post('/api/admin/complete', authenticateJWT, requireRole(['ADMIN', 'STAFF']), (req: Request, res: Response) => {
+    const { serviceId, tokenId } = req.body;
+    let serving: DBQueueToken | undefined;
+
+    if (tokenId) {
+      serving = db.tokens.find((t) => t.id === tokenId);
+    } else if (serviceId) {
+      serving = db.tokens.find((t) => t.serviceId === serviceId && (t.status === 'SERVING' || t.status === 'CALLED'));
+    } else {
+      serving = db.tokens.find((t) => t.status === 'SERVING' || t.status === 'CALLED');
+    }
+
+    if (!serving) {
+      return res.status(400).json({ message: 'No customer is currently being served in this service.' });
+    }
+
+    const now = new Date().toISOString();
+    serving.status = 'COMPLETED';
+    serving.completedAt = now;
+    serving.updatedAt = now;
+
+    const srv = db.services.find((s) => s.id === serving.serviceId);
+    const org = db.organizations.find((o) => o.id === serving.organizationId);
+    const counter = db.counters.find((c) => c.currentTokenId === serving.id || c.id === serving.counterId);
+
+    if (counter && counter.currentTokenId === serving.id) {
+      counter.currentTokenId = undefined;
+    }
+
+    db.history.unshift({
+      id: uuidv4(),
+      tokenId: serving.id,
+      tokenNumber: serving.tokenNumber,
+      customerName: serving.customerName,
+      organizationId: serving.organizationId,
+      organizationName: org ? org.name : 'Facility',
+      serviceId: serving.serviceId,
+      serviceName: srv ? srv.name : 'Service',
+      counterNumber: counter?.counterNumber || 'Counter 01',
+      status: 'COMPLETED',
+      waitingTimeMinutes: 14,
+      serviceTimeMinutes: 8,
+      createdAt: serving.createdAt,
+      completedAt: now,
+    });
+
+    broadcastSSE('QUEUE_ADVANCED', {
+      action: 'TOKEN_COMPLETED',
+      serviceId: serving.serviceId,
+      tokenNumber: serving.tokenNumber,
+    });
+
+    res.json({
+      message: `Token ${serving.tokenNumber} marked as Completed.`,
+      token: calculateTokenQueueStats(serving),
+    });
+  });
+
+  app.post('/api/admin/skip', authenticateJWT, requireRole(['ADMIN', 'STAFF']), (req: Request, res: Response) => {
+    const { serviceId, tokenId } = req.body;
+    let serving: DBQueueToken | undefined;
+
+    if (tokenId) {
+      serving = db.tokens.find((t) => t.id === tokenId);
+    } else if (serviceId) {
+      serving = db.tokens.find((t) => t.serviceId === serviceId && (t.status === 'SERVING' || t.status === 'CALLED'));
+    } else {
+      serving = db.tokens.find((t) => t.status === 'SERVING' || t.status === 'CALLED');
+    }
+
+    if (!serving) {
+      return res.status(400).json({ message: 'No customer is currently being served in this service.' });
+    }
+
+    const now = new Date().toISOString();
+    serving.status = 'SKIPPED';
+    serving.skippedAt = now;
+    serving.updatedAt = now;
+
+    const srv = db.services.find((s) => s.id === serving.serviceId);
+    const org = db.organizations.find((o) => o.id === serving.organizationId);
+    const counter = db.counters.find((c) => c.currentTokenId === serving.id || c.id === serving.counterId);
+
+    if (counter && counter.currentTokenId === serving.id) {
+      counter.currentTokenId = undefined;
+    }
+
+    db.history.unshift({
+      id: uuidv4(),
+      tokenId: serving.id,
+      tokenNumber: serving.tokenNumber,
+      customerName: serving.customerName,
+      organizationId: serving.organizationId,
+      organizationName: org ? org.name : 'Facility',
+      serviceId: serving.serviceId,
+      serviceName: srv ? srv.name : 'Service',
+      counterNumber: counter?.counterNumber || 'Counter 01',
+      status: 'SKIPPED',
+      waitingTimeMinutes: 10,
+      serviceTimeMinutes: 0,
+      createdAt: serving.createdAt,
+      completedAt: now,
+    });
+
+    broadcastSSE('QUEUE_ADVANCED', {
+      action: 'TOKEN_SKIPPED',
+      serviceId: serving.serviceId,
+      tokenNumber: serving.tokenNumber,
+    });
+
+    res.json({
+      message: `Token ${serving.tokenNumber} marked as Skipped.`,
+      token: calculateTokenQueueStats(serving),
+    });
+  });
+
+  // Public TV Display Board API (Strictly Service-Specific)
+  app.get('/api/display/queue', (req: Request, res: Response) => {
+    const { facilityId, organizationId, serviceId } = req.query as {
+      facilityId?: string;
+      organizationId?: string;
+      serviceId?: string;
+    };
+
+    const targetOrgId = facilityId || organizationId;
+    let targetService = serviceId ? db.services.find((s) => s.id === serviceId) : undefined;
+
+    if (!targetService && targetOrgId) {
+      targetService = db.services.find((s) => s.organizationId === targetOrgId);
+    }
+    if (!targetService) {
+      targetService = db.services.find((s) => s.codePrefix === 'P') || db.services.find((s) => s.id === 'srv-gen-1') || db.services[0];
+    }
+
+    const org = db.organizations.find((o) => o.id === targetService.organizationId);
+
+    // Now serving customer ONLY in this service
+    const serving = db.tokens.find(
+      (t) => t.serviceId === targetService.id && t.organizationId === targetService.organizationId && (t.status === 'SERVING' || t.status === 'CALLED')
+    );
+
+    const counter = serving && serving.counterId
+      ? db.counters.find((c) => c.id === serving.counterId)
+      : db.counters.find((c) => c.serviceId === targetService.id && c.organizationId === targetService.organizationId);
+
+    // Waiting customers ONLY in this service
+    const waitingTokens = db.tokens
+      .filter((t) => t.serviceId === targetService.id && t.organizationId === targetService.organizationId && t.status === 'WAITING')
+      .sort((a, b) => a.sequenceNumber - b.sequenceNumber);
+
+    res.json({
+      facility: org ? { id: org.id, name: org.name, type: org.type, address: org.address } : null,
+      service: {
+        id: targetService.id,
+        name: targetService.name,
+        codePrefix: targetService.codePrefix,
+        averageServiceTime: targetService.averageServiceTime,
+      },
+      nowServing: serving ? {
+        tokenNumber: serving.tokenNumber,
+        counterNumber: counter ? counter.counterNumber : 'Counter 01',
+        customerName: serving.customerName,
+        serviceName: targetService.name,
+      } : null,
+      nextQueue: waitingTokens.slice(0, 8).map((t) => t.tokenNumber),
+      waitingTokens: waitingTokens.slice(0, 8).map(calculateTokenQueueStats),
+      totalWaiting: waitingTokens.length,
+      lastUpdated: new Date().toISOString(),
+      availableFacilities: db.organizations.map((o) => ({
+        id: o.id,
+        name: o.name,
+        type: o.type,
+        services: db.services.filter((s) => s.organizationId === o.id).map((s) => ({
+          id: s.id,
+          name: s.name,
+          codePrefix: s.codePrefix,
+          waitingCount: db.tokens.filter((t) => t.serviceId === s.id && t.organizationId === o.id && t.status === 'WAITING').length,
+          nowServing: db.tokens.find((t) => t.serviceId === s.id && t.organizationId === o.id && (t.status === 'SERVING' || t.status === 'CALLED'))?.tokenNumber || 'None',
+        })),
+      })),
+    });
   });
 
   // ----------------------------------------------------------------------------
@@ -1736,18 +2370,22 @@ async function startServer() {
   // ----------------------------------------------------------------------------
   // VITE DEV MIDDLEWARE / PRODUCTION SPA FALLBACK
   // ----------------------------------------------------------------------------
-  if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
+  const distPath = path.join(process.cwd(), 'dist');
+  const indexHtmlExists = fs.existsSync(path.join(distPath, 'index.html'));
+  const isProduction = process.env.NODE_ENV === 'production' || (indexHtmlExists && process.env.npm_lifecycle_event !== 'dev');
+
+  if (isProduction) {
     app.use(express.static(distPath));
     app.get('*', (req: Request, res: Response) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
+  } else {
+    const { createServer } = await import('vite');
+    const vite = await createServer({
+      server: { middlewareMode: true, hmr: false },
+      appType: 'spa',
+    });
+    app.use(vite.middlewares);
   }
 
   app.listen(PORT, '0.0.0.0', () => {
