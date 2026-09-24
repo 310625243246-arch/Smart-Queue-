@@ -383,7 +383,7 @@ Cloud-based monitoring
 
 Vidhya V
 
-Computer Science / Software Development Student
+Artificial Intelligence & Data Science / Software Development Student
 
 🔗 Project Links
 🌐 Live Demo
