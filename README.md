@@ -1,131 +1,397 @@
-# SmartQueue - Full-Stack Digital Queue Management System
+# 🏥 Smart Queue Management System
 
-SmartQueue is a production-ready, full-stack digital queue management platform built for **hospitals, banks, and citizen service centers**. It replaces chaotic physical waiting lines with digital tokens, real-time queue position tracking, counter assignment routing, and instant notification chimes.
+A modern **Digital Queue Management System** designed for hospitals, banks, and service centers to provide real-time queue tracking, digital tokens, waiting-time estimation, and efficient queue management.
 
----
+## 🚀 Live Demo
 
-## 🌟 Key Features
+👉 **[Open Smart Queue](https://ais-dev-3r4svd7axo7gw6t2y3qgqj-462897489933.asia-southeast1.run.app)**
 
-- 🎟️ **Digital Token Generation**: Instant token generation with automated service prefix codes (`A101`, `B101`, `C101`, `D101`).
-- ⏱️ **Live Position & Wait-Time Estimation**: Real-time computation of queue depth, people ahead, and expected wait time based on average service handling duration.
-- ⚡ **Redis Fast Active Queue & Concurrency Lock**: High-speed queue states with atomic mutex locks on "Call Next" operations to eliminate race conditions between multiple service counters.
-- 📡 **Real-Time Server-Sent Events (SSE)**: Instant bi-directional broadcast of queue advancement, counter calls, and customer notifications.
-- 🏢 **Multi-Organization & Multi-Sector Support**: Pre-configured support for **Hospitals** (Consultations, Cardiology, Pharmacy, Labs), **Banks** (Tellers, Loans, Accounts), and **Service Centers** (Verification, Permits).
-- 🖥️ **Staff Counter Operations**: Interactive desk console with session stopwatch, Call Next, Start Serving, Complete, Skip, and Recall capabilities.
-- 📊 **Executive Admin & Analytics Dashboard**: Real-time multi-queue board, trend charts, volume by service, counter assignment, and CSV history audit export.
-- 🔔 **Multi-Channel In-App Alerts**: Audio chime and floating alert banner when a customer's token is called.
+## 📌 GitHub Repository
+
+👉 **[View Source Code](https://github.com/310625243246-arch/Smart-Queue-)**
 
 ---
 
-## 🏗️ Technology Stack
+## 📖 Problem Statement
 
-| Layer | Technologies |
-|---|---|
-| **Frontend** | React 18, TypeScript, Vite, Tailwind CSS, React Router, Recharts, Lucide Icons |
-| **Backend** | Node.js, Express.js, TypeScript, REST API Architecture |
-| **Database** | PostgreSQL Relational Schema (`/database/schema.sql`) |
-| **Fast Cache** | Redis Queue Mutex & Active State Engine |
-| **Realtime** | Server-Sent Events (SSE) Stream at `/api/realtime/events` |
-| **Authentication**| JWT (JSON Web Tokens) with bcrypt password hashing |
-| **Containerization**| Docker & Docker Compose (`docker-compose.yml`) |
+Customers at hospitals, banks, and service centers often have no visibility into:
 
----
+- Current queue status
+- Number of people waiting
+- Estimated waiting time
+- Current serving token
+- Service progress
 
-## 📋 Implementation Stages (All 14 Stages Completed)
-
-- [x] **Stage 1: Frontend & Backend Foundation** - Express + React Vite unified architecture, routes, context, and types.
-- [x] **Stage 2: PostgreSQL Database Schema** - Full DDL schema in `/database/schema.sql` with tables for users, organizations, services, counters, queues, tokens, notifications, and history.
-- [x] **Stage 3: Authentication & Security** - JWT-based auth, password hashing, role-based access control (`ADMIN`, `STAFF`, `CUSTOMER`), and 1-click demo accounts.
-- [x] **Stage 4: Organizations & Services Management** - Multi-tenant structure supporting hospitals, banks, and citizen hubs with customizable handling durations.
-- [x] **Stage 5: Queue & Token Generation Engine** - Atomic sequence generator, real-time wait estimation, and customer queue tracking.
-- [x] **Stage 6: Staff Queue Management** - Counter operator desk with Call Next, Serving, Complete, Skip, and Recall actions.
-- [x] **Stage 7: Redis Cache & Concurrency Lock** - High-speed queue cache and mutex lock preventing duplicate token calls across multiple tellers.
-- [x] **Stage 8: Real-Time Updates** - SSE live stream syncing dashboards immediately upon any queue advancement.
-- [x] **Stage 9: Customer Dashboard & Live Tracker** - 3-step venue/service selector, active token tracker card, and past visit history.
-- [x] **Stage 10: Admin Dashboard & Analytics** - Recharts analytics, live multi-queue board, CRUD tables for venues/services/desks.
-- [x] **Stage 11: Notification System** - Audio chime and banner notifications for "Token Called" and "You Are Next in Line".
-- [x] **Stage 12: Docker Containerization** - Multi-stage `Dockerfile` and `docker-compose.yml` orchestrating App, PostgreSQL, and Redis.
-- [x] **Stage 13: Testing & Concurrency Hardening** - Rigorous validation, verified TypeScript types, and linter check.
-- [x] **Stage 14: Documentation & Deployment** - Complete API specification and setup manual.
+This project provides a digital solution that allows customers and staff to monitor and manage queues efficiently.
 
 ---
 
-## 🚀 Getting Started
+## 🎯 Project Objective
 
-### 1. Local Development
+The main objective of Smart Queue is to provide:
 
-```bash
-# Install dependencies
+- Digital queue/token generation
+- Real-time queue status
+- Estimated waiting time
+- People-ahead information
+- Staff queue management
+- Service-specific queues
+- Digital display monitoring
+- Role-based access
+- Efficient queue operations
+
+---
+
+## ✨ Features
+
+### 👤 Customer
+
+Customers can:
+
+- Select a facility
+- Select a service
+- Join a queue
+- Receive a digital queue number
+- View people ahead
+- View estimated waiting time
+- View the currently serving number
+- View assigned counter
+- Track queue status
+- Leave the queue
+
+### 👨‍💼 Staff
+
+Staff members can:
+
+- View the active queue
+- View currently serving customers
+- Call the next customer
+- Complete a customer
+- Skip a customer
+- Manage counter status
+- Monitor queue progress
+- Track service operations
+
+### 🛡️ Admin
+
+Administrators can:
+
+- Monitor overall queue activity
+- View queue statistics
+- Monitor live queues
+- Manage staff
+- Manage counters
+- Manage services
+- View analytics
+- Configure system settings
+- View audit logs
+- Monitor multiple facilities
+
+---
+
+## 🏥 Service-Based Queue Management
+
+Smart Queue is designed so that different services can maintain their own independent queues.
+
+### Example
+
+```text
+Hospital
+│
+├── General Consultation
+│   ├── Q01
+│   ├── Q02
+│   └── Q03
+│
+├── Pharmacy
+│   ├── P01
+│   ├── P02
+│   └── P03
+│
+├── Laboratory
+│   ├── L01
+│   ├── L02
+│   └── L03
+│
+└── Billing
+    ├── B01
+    ├── B02
+    └── B03
+
+Each service can have its own:
+
+Queue number
+Waiting customers
+Current serving customer
+People ahead
+Estimated waiting time
+Counter assignment
+Queue status
+
+This prevents unrelated services from being mixed into one common queue.
+
+📺 Digital Display Board
+
+The system includes a live display screen for monitoring queue activity.
+
+The display can show:
+
+Current serving number
+Queue status
+Service information
+Counter information
+Waiting customers
+Real-time queue updates
+
+This can be used on a monitor or TV at a hospital, bank, or service center.
+
+🔐 Role-Based Access
+
+The application separates functionality based on user roles.
+
+Role	Main Function
+Customer	Join and track queue
+Staff	Manage service queue
+Admin	Manage and monitor system
+Customer
+Customer → Select Service → Join Queue → Track Token
+Staff
+Staff → View Queue → Call Next → Serve → Complete/Skip
+Admin
+Admin → Dashboard → Monitor → Manage → Analyze
+🛠️ Technology Stack
+Frontend
+React
+TypeScript
+Vite
+Lucide React
+Backend
+Node.js
+Express.js
+TypeScript
+REST API
+Development & Deployment
+Git
+GitHub
+Docker
+Cloud Deployment
+🏗️ System Architecture
+                ┌───────────────────┐
+                │     Customer      │
+                └─────────┬─────────┘
+                          │
+                          ▼
+                ┌───────────────────┐
+                │  React Frontend   │
+                │ TypeScript + Vite │
+                └─────────┬─────────┘
+                          │
+                     REST API
+                          │
+                          ▼
+                ┌───────────────────┐
+                │  Express Backend  │
+                │   Node.js + TS    │
+                └─────────┬─────────┘
+                          │
+             ┌────────────┼────────────┐
+             ▼            ▼            ▼
+        Queue Logic    Authentication   Services
+             │
+             ▼
+       Queue Management
+             │
+      ┌──────┴──────┐
+      ▼             ▼
+   Staff         Display
+🔄 Application Flow
+Step 1 – Customer Selects Service
+
+The customer selects the required facility and service.
+
+Step 2 – Customer Joins Queue
+
+The system generates a digital queue number.
+
+Example:
+
+Queue Number: Q05
+People Ahead: 3
+Estimated Wait: 15 minutes
+Step 3 – Staff Manages Queue
+
+Staff can:
+
+Call Next
+    ↓
+Serve Customer
+    ↓
+Complete / Skip
+    ↓
+Call Next Customer
+Step 4 – Queue Updates
+
+The customer can monitor:
+
+Current serving number
+Position in queue
+People ahead
+Estimated waiting time
+Counter
+Current status
+Step 5 – Completion
+
+After service completion, the queue moves to the next waiting customer.
+
+📊 Queue Status
+
+The system supports different queue states:
+
+WAITING
+   ↓
+CALLED
+   ↓
+SERVING
+   ↓
+COMPLETED
+
+A customer can also be:
+
+WAITING → SKIPPED
+📁 Project Structure
+Smart-Queue/
+│
+├── frontend/
+│   ├── src/
+│   ├── components/
+│   ├── pages/
+│   └── ...
+│
+├── backend/
+│   ├── src/
+│   ├── routes/
+│   ├── controllers/
+│   └── ...
+│
+├── package.json
+├── README.md
+└── ...
+⚙️ Installation
+1. Clone the Repository
+git clone https://github.com/310625243246-arch/Smart-Queue-.git
+2. Open the Project
+cd Smart-Queue-
+3. Install Dependencies
+
+Install the required dependencies for the frontend and backend.
+
 npm install
 
-# Start development server on port 3000
-npm run dev
-```
+If the project contains separate frontend and backend folders:
 
-Visit `http://localhost:3000` in your browser.
+cd frontend
+npm install
 
-### 2. Running with Docker Compose
+and:
 
-```bash
-# Start full stack: SmartQueue app + PostgreSQL + Redis
-docker-compose up --build
-```
+cd ../backend
+npm install
+4. Run the Application
 
----
+Start the frontend and backend according to the project configuration.
 
-## 🔑 Demo Accounts
+🧪 Testing
 
-Use the **1-Click Demo Switcher** in the top navigation bar or log in with:
+The application can be tested using the following user flows:
 
-| Role | Email | Password | Access |
-|---|---|---|---|
-| **Admin** | `admin@smartqueue.com` | `admin123` | Full analytics, CRUD organizations, services, and counters |
-| **Staff** | `staff@smartqueue.com` | `staff123` | Counter operator desk, Call Next, Start, Complete, Skip |
-| **Customer** | `customer@smartqueue.com` | `customer123` | Generate tokens, live position tracker, visit history |
+Customer Flow
+Login
+ ↓
+Select Facility
+ ↓
+Select Service
+ ↓
+Join Queue
+ ↓
+Receive Token
+ ↓
+Track Queue
+ ↓
+Leave Queue / Complete Service
+Staff Flow
+Login
+ ↓
+Open Staff Queue
+ ↓
+Call Next
+ ↓
+Serve Customer
+ ↓
+Complete / Skip
+Admin Flow
+Login
+ ↓
+Open Dashboard
+ ↓
+Monitor Queues
+ ↓
+Manage Services
+ ↓
+Manage Staff/Counters
+ ↓
+View Analytics
+ ↓
+View Audit Logs
+🌐 Deployment
 
----
+The project is deployed and accessible online.
 
-## 📡 REST API Documentation
+Live Application
 
-### Authentication
-- `POST /api/auth/register` - Create new user account.
-- `POST /api/auth/login` - Authenticate user and receive JWT.
-- `GET /api/auth/me` - Get authenticated user profile.
-- `POST /api/auth/demo-switch` - 1-Click role switcher for demo testing.
+👉 https://ais-dev-3r4svd7axo7gw6t2y3qgqj-462897489933.asia-southeast1.run.app
 
-### Organizations & Services
-- `GET /api/organizations` - List all organizations and venues.
-- `POST /api/organizations` - Create new organization *(Admin)*.
-- `PUT /api/organizations/:id` - Update organization *(Admin)*.
-- `DELETE /api/organizations/:id` - Remove organization *(Admin)*.
-- `GET /api/services` - List services by organization.
-- `POST /api/services` - Add service queue with code prefix & avg handling time *(Admin)*.
+Source Code
 
-### Queues & Digital Tokens
-- `GET /api/queues` - Multi-queue live status board.
-- `GET /api/queues/:serviceId/status` - Live queue depth and waiting customer list.
-- `POST /api/queues/join` - Generate digital token (Join queue).
-- `GET /api/tokens/:idOrNumber` - Look up token by ID or number (e.g. `A105`).
-- `POST /api/tokens/:id/cancel` - Cancel active token.
-- `GET /api/customer/tokens` - Active and past tokens for current user.
+👉 https://github.com/310625243246-arch/Smart-Queue-
 
-### Staff Counter Desk
-- `POST /api/staff/queue/next` - Atomic "Call Next" with Redis mutex lock.
-- `POST /api/staff/tokens/:id/start` - Mark token as SERVING and begin stopwatch.
-- `POST /api/staff/tokens/:id/complete` - Mark COMPLETED and record audit history.
-- `POST /api/staff/tokens/:id/skip` - Skip absent customer.
-- `POST /api/staff/tokens/:id/recall` - Recall customer back to counter.
-- `POST /api/staff/counter/status` - Toggle counter state (`ACTIVE`, `PAUSED`, `OFFLINE`).
+🎯 Key Benefits
+Reduces physical waiting
+Provides digital queue tokens
+Improves queue visibility
+Shows estimated waiting time
+Helps staff manage queues efficiently
+Separates queues by service
+Provides real-time queue information
+Improves customer experience
+Supports centralized administration
+🔮 Future Enhancements
 
-### Admin & Analytics
-- `GET /api/admin/dashboard` - High-level metrics and KPIs.
-- `GET /api/admin/statistics` - Weekly volume trend, service category distribution.
-- `GET /api/admin/history` - Comprehensive audit log history.
+Possible future improvements include:
 
-### Realtime SSE
-- `GET /api/realtime/events` - Server-Sent Events stream for live queue broadcasts.
+SMS notifications
+WhatsApp notifications
+Email notifications
+QR-code based queue joining
+Mobile application
+PostgreSQL database integration
+Redis-based real-time queue processing
+Advanced analytics
+Multi-hospital support
+Appointment integration
+Cloud-based monitoring
+👩‍💻 Author
 
----
+Vidhya V
 
-## 📄 License
-MIT License - Built for high-efficiency digital queue orchestration.
+Computer Science / Software Development Student
+
+🔗 Project Links
+🌐 Live Demo
+💻 GitHub Repository
+⭐ Support
+
+If you find this project useful, consider giving the repository a ⭐ on GitHub.
+
+🚀 Smart Queue
+
+Digital tokens. Real-time queue tracking. Better service management.
